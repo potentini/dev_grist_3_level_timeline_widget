@@ -494,11 +494,11 @@
         position: fixed;
         background: #0f172a;
         color: #fff;
-        padding: 7px 9px;
+        padding: 8px 9px;
         border-radius: 8px;
         font-size: 0.78rem;
         z-index: 1000;
-        max-width: 280px;
+        width: min(300px, calc(100vw - 24px));
         box-shadow: 0 14px 32px rgba(0, 0, 0, 0.26);
         pointer-events: none;
         opacity: 0;
@@ -508,13 +508,21 @@
 
       .tooltip.visible {
         opacity: 1;
+        pointer-events: auto;
         transform: translateY(0);
       }
 
       .tooltip-title {
         font-weight: 800;
-        margin-bottom: 3px;
+        margin: 0 0 6px;
+        line-height: 1.2;
       }
+
+      .tooltip.editing .tooltip-title {
+        margin-left: 78px;
+      }
+
+      .tooltip-row[hidden] { display: none; }
 
       .tooltip-row {
         display: flex;
@@ -526,13 +534,77 @@
 
       .tooltip-extra {
         margin-top: 4px;
-        font-size: 0.7rem;
+        font-size: 0.72rem;
       }
 
-      .tooltip-extra div {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
+      .tooltip-save {
+        position: absolute;
+        top: 7px;
+        left: 8px;
+        border: 0;
+        border-radius: 7px;
+        padding: 3px 7px;
+        background: var(--success);
+        color: #fff;
+        font-size: 0.68rem;
+        font-weight: 800;
+        cursor: pointer;
+      }
+
+      .tooltip-save[hidden] { display: none; }
+
+      .tooltip-fields {
+        display: grid;
+        gap: 4px;
+      }
+
+      .tooltip-edit-row {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 86px minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+        padding: 4px 5px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.04);
+        color: inherit;
+        font: inherit;
+        text-align: left;
+      }
+
+      .tooltip-edit-row.editable {
+        cursor: pointer;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .tooltip-edit-row.editable:hover,
+      .tooltip-edit-row.editing {
+        border-color: rgba(255, 255, 255, 0.32);
+        background: rgba(255, 255, 255, 0.14);
+      }
+
+      .tooltip-edit-row span {
+        color: rgba(255, 255, 255, 0.72);
+        font-weight: 700;
+      }
+
+      .tooltip-edit-row strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 700;
+      }
+
+      .tooltip-edit-row input {
+        min-width: 0;
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        border-radius: 6px;
+        padding: 3px 5px;
+        background: #fff;
+        color: var(--text);
+        font: inherit;
       }
 
       .toast-container {
