@@ -85,6 +85,10 @@
   const NAVIGATION_STEP_RATIO = 1 / 24;
   const DAY_VIEW_CELL_WIDTH = 32;
 
+  const STORAGE_KEY = "grist_gantt_multilevel_state_v1";
+  const DIRECT_MAPPING_STORAGE_KEY = "grist_gantt_direct_multitable_mapping_v1";
+  const DIRECT_FIELDS = ["name", "start", "end", "status", "responsible", "progress"];
+
   let zoomMode = "day";
   let allRecords = [];
   let treeRoots = [];
@@ -103,11 +107,12 @@
   let currentMappingsOk = false;
   let latestMappings = null;
   let latestWriteSummary = "selectedTable.update";
+  let directMappingConfig = loadDirectMappingConfig();
+  let directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
   let sourceColumnMetaPromise = null;
   const sourceColumnMetaCache = new Map();
+  const tableMetaCache = new Map();
   const tooltipState = { nodeId: null, editingField: null, draftValue: null, forceRefresh: false };
-
-  const STORAGE_KEY = "grist_gantt_multilevel_state_v1";
 
   const mappingInfoEl = document.getElementById("mappingInfo");
   const debugStatusEl = document.getElementById("debugStatus");
@@ -185,6 +190,40 @@
     } catch (e) {
       console.warn("Impossible de charger l’état persistant :", e);
     }
+  }
+
+  function createEmptyDirectLevelConfig() {
+    return { tableId: "", parentCol: "", nameCol: "", startCol: "", endCol: "", statusCol: "", responsibleCol: "", progressCol: "" };
+  }
+
+  function normalizeDirectMappingConfig(config) {
+    const normalized = { levels: {} };
+    for (const levelInfo of LEVELS) {
+      const existing = config?.levels?.[levelInfo.level] || {};
+      normalized.levels[levelInfo.level] = { ...createEmptyDirectLevelConfig(), ...existing };
+    }
+    return normalized;
+  }
+
+  function loadDirectMappingConfig() {
+    try {
+      return normalizeDirectMappingConfig(JSON.parse(window.localStorage.getItem(DIRECT_MAPPING_STORAGE_KEY) || "{}"));
+    } catch (e) {
+      console.warn("Impossible de charger le mapping multitable direct :", e);
+      return normalizeDirectMappingConfig({});
+    }
+  }
+
+  function saveDirectMappingConfig() {
+    try {
+      window.localStorage.setItem(DIRECT_MAPPING_STORAGE_KEY, JSON.stringify(directMappingConfig));
+    } catch (e) {
+      console.warn("Impossible de sauvegarder le mapping multitable direct :", e);
+    }
+  }
+
+  function hasDirectMappingConfig(config) {
+    return LEVELS.some((levelInfo) => !!config?.levels?.[levelInfo.level]?.tableId);
   }
 
   function saveState() {
@@ -1080,8 +1119,13 @@
         grist.docApi.fetchTable("_grist_Tables_column")
       ]);
       const tableIdByRecordId = new Map();
+      tableMetaCache.clear();
       for (const table of rowsFromGristTable(tablesRaw)) {
-        if (table.id != null && table.tableId) tableIdByRecordId.set(Number(table.id), String(table.tableId));
+        if (table.id != null && table.tableId) {
+          const tableId = String(table.tableId);
+          tableIdByRecordId.set(Number(table.id), tableId);
+          tableMetaCache.set(tableId, { tableId, label: String(table.summarySourceTable || table.tableId) });
+        }
       }
       sourceColumnMetaCache.clear();
       for (const col of rowsFromGristTable(columnsRaw)) {
@@ -1112,6 +1156,171 @@
     const colId = fieldSourceColumn(node, field);
     if (!node?.source?.tableId || !colId) return null;
     return sourceColumnMetaCache.get(metadataKey(node.source.tableId, colId)) || null;
+  }
+
+  function tableOptionsHtml(selectedTableId) {
+    const tables = Array.from(tableMetaCache.values()).sort((a, b) => a.tableId.localeCompare(b.tableId, "fr"));
+    return `<option value="">— choisir une table —</option>` + tables.map((table) => {
+      const selected = table.tableId === selectedTableId ? "selected" : "";
+      return `<option value="${escapeHtml(table.tableId)}" ${selected}>${escapeHtml(table.tableId)}</option>`;
+    }).join("");
+  }
+
+  function columnOptionsHtml(tableId, selectedColId, { includeEmpty = true, onlyTypes = null } = {}) {
+    const cols = Array.from(sourceColumnMetaCache.values())
+      .filter((col) => col.tableId === tableId && !col.isFormula)
+      .filter((col) => !onlyTypes || onlyTypes.includes(baseGristType(col.type)))
+      .sort((a, b) => a.colId.localeCompare(b.colId, "fr"));
+    const empty = includeEmpty ? `<option value="">—</option>` : "";
+    return empty + cols.map((col) => {
+      const selected = col.colId === selectedColId ? "selected" : "";
+      return `<option value="${escapeHtml(col.colId)}" ${selected}>${escapeHtml(col.label || col.colId)} (${escapeHtml(col.colId)} · ${escapeHtml(col.typeLabel)})</option>`;
+    }).join("");
+  }
+
+  function directFieldValue(row, cfg, field) {
+    const col = cfg?.[`${field}Col`];
+    return col ? row?.[col] : null;
+  }
+
+  function directParentIds(row, parentCol) {
+    if (!parentCol || row?.[parentCol] == null) return [];
+    const refs = parseRefValues(row[parentCol]);
+    const ids = refs.map((ref) => ref.rowId).filter((id) => id != null);
+    if (ids.length) return ids;
+    const value = row[parentCol];
+    if (Array.isArray(value)) return splitListValue(value).map(Number).filter(Number.isFinite);
+    const n = Number(value);
+    return Number.isFinite(n) ? [n] : [];
+  }
+
+  function directNodeFromRow(row, level, cfg, sourceIndex) {
+    const rowId = Number(row.id ?? row.Id ?? row.ID);
+    if (!Number.isFinite(rowId)) return null;
+    const label = String(directFieldValue(row, cfg, "name") || row.Name || row.name || row.id || "").trim();
+    const startDate = normalizeDate(directFieldValue(row, cfg, "start"));
+    const endDate = normalizeDate(directFieldValue(row, cfg, "end"));
+    const source = {
+      tableId: cfg.tableId,
+      rowId,
+      startCol: cfg.startCol || null,
+      endCol: cfg.endCol || null,
+      progressCol: cfg.progressCol || null,
+      nameCol: cfg.nameCol || null,
+      statusCol: cfg.statusCol || null,
+      responsibleCol: cfg.responsibleCol || null
+    };
+    const node = createEmptyNode({
+      id: `L${level}:src:${cfg.tableId}:${rowId}`,
+      level,
+      label,
+      parentId: null,
+      sourceIndex,
+      sourceRowId: rowId,
+      source
+    });
+    node.startDate = startDate;
+    node.endDate = endDate;
+    node.explicitDates = !!(startDate || endDate);
+    node.status = String(directFieldValue(row, cfg, "status") || "");
+    node.responsible = String(directFieldValue(row, cfg, "responsible") || "");
+    node.progress = parseProgress(directFieldValue(row, cfg, "progress"));
+    node.rawRows = [rowId];
+    return node;
+  }
+
+  async function buildDirectMultitableRecords() {
+    await loadSourceColumnMetadata();
+    const nodes = new Map();
+    const levelNodes = new Map();
+    let sourceIndex = 0;
+
+    for (const levelInfo of LEVELS) {
+      const cfg = directMappingConfig.levels[levelInfo.level];
+      if (!cfg?.tableId || !cfg.nameCol) continue;
+      const rawTable = await grist.docApi.fetchTable(cfg.tableId);
+      const rows = rowsFromGristTable(rawTable);
+      const byRowId = new Map();
+      for (const row of rows) {
+        const node = directNodeFromRow(row, levelInfo.level, cfg, sourceIndex++);
+        if (!node) continue;
+        nodes.set(node.id, node);
+        byRowId.set(node.source.rowId, node);
+      }
+      levelNodes.set(levelInfo.level, { rows, byRowId, cfg });
+    }
+
+    const roots = [];
+    for (const levelInfo of LEVELS) {
+      const level = levelInfo.level;
+      const current = levelNodes.get(level);
+      if (!current) continue;
+      if (level === 1) {
+        for (const node of current.byRowId.values()) roots.push(node);
+        continue;
+      }
+      const parent = levelNodes.get(level - 1);
+      for (const row of current.rows) {
+        const rowId = Number(row.id ?? row.Id ?? row.ID);
+        const node = current.byRowId.get(rowId);
+        if (!node) continue;
+        const parentIds = directParentIds(row, current.cfg.parentCol);
+        const parentNode = parentIds.map((id) => parent?.byRowId.get(id)).find(Boolean);
+        if (parentNode) {
+          node.parentId = parentNode.id;
+          parentNode.children.push(node);
+        } else {
+          roots.push(node);
+        }
+      }
+    }
+
+    function finalize(node) {
+      let min = node.startDate || null;
+      let max = node.endDate || node.startDate || null;
+      node.children.sort(sortNodes);
+      for (const child of node.children) {
+        finalize(child);
+        if (child.aggStart && (!min || child.aggStart < min)) min = child.aggStart;
+        if (child.aggEnd && (!max || child.aggEnd > max)) max = child.aggEnd;
+        if (!node.status && child.status) node.status = child.status;
+        if (!node.responsible && child.responsible) node.responsible = child.responsible;
+      }
+      node.aggStart = node.startDate || min;
+      node.aggEnd = node.endDate || max || min;
+      node.isMilestone = !node.startDate && !!node.endDate;
+      node.milestoneDate = node.isMilestone ? node.endDate : null;
+      return node;
+    }
+
+    roots.sort(sortNodes).forEach(finalize);
+    nodeById = nodes;
+    allRecords = Array.from(nodes.values());
+    treeRoots = roots;
+    return allRecords;
+  }
+
+  async function loadAndRenderDirectMapping() {
+    directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
+    if (!directMappingModeActive) return false;
+    try {
+      setDebugStatus("Chargement direct des tables sources…");
+      await buildDirectMultitableRecords();
+      const range = computeGlobalRange(allRecords);
+      globalMinDate = range.min;
+      globalMaxDate = range.max;
+      keepOrRecomputeVisibleRange();
+      saveState();
+      setDebugStatus(`Mapping direct OK: ${allRecords.length} élément(s)`);
+      setDebugSyncMode("docApi.fetchTable/applyUserActions (mapping direct)");
+      render();
+      return true;
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || "Erreur de chargement du mapping direct", "error");
+      setDebugStatus("Mapping direct KO");
+      return true;
+    }
   }
 
   function scheduleTooltipMetadataRefresh(node) {
@@ -1652,7 +1861,10 @@
   function refreshTableInfo() {
     const mappedCols = latestMappings && latestMappings.columns ? Object.keys(latestMappings.columns).length : latestMappings ? Object.keys(latestMappings).length : 0;
     const routed = allRecords.filter((n) => n.source.tableId && n.source.rowId != null).length;
-    if (mappingInfoEl) mappingInfoEl.textContent = `Mapping actif : ${currentMappingsOk ? "oui" : "non"}, table liée = ${currentTableId || "inconnue"}, mappings reçus = ${mappedCols}, niveaux = 1/2/3, écritures routées = ${routed}/${allRecords.length}`;
+    const directTables = LEVELS.map((levelInfo) => directMappingConfig.levels[levelInfo.level]?.tableId).filter(Boolean).join(" → ");
+    if (mappingInfoEl) mappingInfoEl.textContent = directMappingModeActive
+      ? `Mapping direct multitable : ${directTables || "aucune table"}, écritures routées = ${routed}/${allRecords.length}`
+      : `Mapping Grist actif : ${currentMappingsOk ? "oui" : "non"}, table liée = ${currentTableId || "inconnue"}, mappings reçus = ${mappedCols}, niveaux = 1/2/3, écritures routées = ${routed}/${allRecords.length}`;
     setDebugSyncMode(latestWriteSummary);
   }
 
@@ -1814,31 +2026,89 @@
     render();
   });
 
-  if (toggleMappingPanelBtn && mappingPanelEl && debugPanelEl) {
-    toggleMappingPanelBtn.textContent = "Aide mapping";
+  function renderDirectMappingPanel() {
+    if (!mappingPanelEl) return;
+    const levelBlocks = LEVELS.map((levelInfo) => {
+      const cfg = directMappingConfig.levels[levelInfo.level];
+      const tableId = cfg.tableId || "";
+      const dateTypes = ["Date", "DateTime"];
+      const refTypes = ["Ref", "RefList", "Int", "Numeric"];
+      const parentRow = levelInfo.level === 1 ? "" : `
+        <div class="row"><label>${escapeHtml(levelInfo.label)} — parent niveau ${levelInfo.level - 1}</label><select data-direct-level="${levelInfo.level}" data-direct-field="parentCol">${columnOptionsHtml(tableId, cfg.parentCol, { onlyTypes: refTypes })}</select></div>`;
+      return `
+        <fieldset class="mapping-level">
+          <legend>${escapeHtml(levelInfo.label)}${levelInfo.required ? " (racine)" : ""}</legend>
+          <div class="row"><label>Table source</label><select data-direct-level="${levelInfo.level}" data-direct-field="tableId">${tableOptionsHtml(tableId)}</select></div>
+          ${parentRow}
+          <div class="row"><label>Titre</label><select data-direct-level="${levelInfo.level}" data-direct-field="nameCol">${columnOptionsHtml(tableId, cfg.nameCol)}</select></div>
+          <div class="row"><label>Date début</label><select data-direct-level="${levelInfo.level}" data-direct-field="startCol">${columnOptionsHtml(tableId, cfg.startCol, { onlyTypes: dateTypes })}</select></div>
+          <div class="row"><label>Date fin</label><select data-direct-level="${levelInfo.level}" data-direct-field="endCol">${columnOptionsHtml(tableId, cfg.endCol, { onlyTypes: dateTypes })}</select></div>
+          <div class="row"><label>Statut</label><select data-direct-level="${levelInfo.level}" data-direct-field="statusCol">${columnOptionsHtml(tableId, cfg.statusCol)}</select></div>
+          <div class="row"><label>Responsable</label><select data-direct-level="${levelInfo.level}" data-direct-field="responsibleCol">${columnOptionsHtml(tableId, cfg.responsibleCol)}</select></div>
+          <div class="row"><label>Avancement</label><select data-direct-level="${levelInfo.level}" data-direct-field="progressCol">${columnOptionsHtml(tableId, cfg.progressCol)}</select></div>
+        </fieldset>`;
+    }).join("");
+
     mappingPanelEl.innerHTML = `
-      <div><strong>Mapping multi-niveau</strong> : mappez au minimum <code>level1Name</code>. Les niveaux 2 et 3 sont optionnels et peuvent aussi être des colonnes <em>Reference List</em>.</div>
-      <div>Si <code>level2Name</code> ou <code>level3Name</code> contient plusieurs références, le widget crée une branche pour chaque référence au lieu de ne prendre que la première.</div>
-      <div>Pour écrire dans les vraies tables sources, exposez pour chaque niveau : <code>levelNSourceTableId</code>, <code>levelNSourceRowId</code>, <code>levelNStartColId</code>, <code>levelNEndColId</code> et, pour éditer depuis l’infobulle, <code>levelNNameColId</code>, <code>levelNStatusColId</code>, <code>levelNResponsibleColId</code>, <code>levelNProgressColId</code>.</div>
-      <div>Exemple : Projets → Tâches → Sous-tâches avec <code>level1SourceTableId=Projets</code>, <code>level2SourceTableId=Taches</code>, <code>level3SourceTableId=Sous_taches</code>.</div>
+      <div><strong>Mapping direct multitable</strong> : choisissez une table source par niveau, puis les champs à lire et à modifier. Le niveau 2 doit pointer vers le niveau 1, et le niveau 3 vers le niveau 2, via une colonne parent.</div>
+      ${levelBlocks}
+      <div class="mapping-actions">
+        <button class="btn btn-small" id="reloadDirectMappingBtn">Recharger depuis les tables</button>
+        <button class="btn btn-small" id="resetManualMappingBtn">Réinitialiser mapping direct</button>
+      </div>
+      <div class="mapping-hint">Le sélecteur de colonnes Grist reste disponible comme compatibilité, mais dès qu’une table est choisie ici le widget utilise ce mapping direct pour identifier les lignes et colonnes sources.</div>
     `;
-    toggleMappingPanelBtn.addEventListener("click", () => {
+  }
+
+  async function ensureDirectMappingPanelReady() {
+    await loadSourceColumnMetadata();
+    renderDirectMappingPanel();
+  }
+
+  if (mappingPanelEl) {
+    mappingPanelEl.addEventListener("change", async (e) => {
+      const select = e.target.closest("[data-direct-level][data-direct-field]");
+      if (!select) return;
+      const level = Number(select.dataset.directLevel);
+      const field = select.dataset.directField;
+      const cfg = directMappingConfig.levels[level];
+      cfg[field] = select.value;
+      if (field === "tableId") {
+        for (const directField of ["parentCol", ...DIRECT_FIELDS.map((name) => `${name}Col`)]) cfg[directField] = "";
+      }
+      saveDirectMappingConfig();
+      directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
+      renderDirectMappingPanel();
+      await loadAndRenderDirectMapping();
+    });
+
+    mappingPanelEl.addEventListener("click", async (e) => {
+      if (e.target.closest("#resetManualMappingBtn")) {
+        directMappingConfig = normalizeDirectMappingConfig({});
+        saveDirectMappingConfig();
+        directMappingModeActive = false;
+        renderDirectMappingPanel();
+        showToast("Mapping direct réinitialisé", "success");
+        return;
+      }
+      if (e.target.closest("#reloadDirectMappingBtn")) await loadAndRenderDirectMapping();
+    });
+  }
+
+  if (toggleMappingPanelBtn && mappingPanelEl && debugPanelEl) {
+    toggleMappingPanelBtn.textContent = "Mapping";
+    toggleMappingPanelBtn.addEventListener("click", async () => {
       const shouldShow = mappingPanelEl.hasAttribute("hidden");
       for (const panel of [debugPanelEl, mappingPanelEl]) {
         if (shouldShow) panel.removeAttribute("hidden");
         else panel.setAttribute("hidden", "hidden");
       }
       toggleMappingPanelBtn.classList.toggle("active", shouldShow);
-      toggleMappingPanelBtn.textContent = shouldShow ? "Masquer aide" : "Aide mapping";
-    });
-  } else if (toggleMappingPanelBtn) {
-    toggleMappingPanelBtn.addEventListener("click", () => {
-      if (!debugPanelEl) return;
-      const shouldShow = debugPanelEl.hasAttribute("hidden");
-      if (shouldShow) debugPanelEl.removeAttribute("hidden");
-      else debugPanelEl.setAttribute("hidden", "hidden");
-      toggleMappingPanelBtn.classList.toggle("active", shouldShow);
-      toggleMappingPanelBtn.textContent = shouldShow ? "Masquer aide" : "Aide mapping";
+      toggleMappingPanelBtn.textContent = shouldShow ? "Masquer mapping" : "Mapping";
+      if (shouldShow) {
+        try { await ensureDirectMappingPanelReady(); }
+        catch (err) { console.error(err); showToast("Impossible de charger les tables Grist", "error"); }
+      }
     });
   }
 
@@ -1852,7 +2122,7 @@
   grist.ready({
     requiredAccess: "full",
     columns: [
-      { name: "level1Name", title: "Niveau 1 — nom", optional: false },
+      { name: "level1Name", title: "Niveau 1 — nom", optional: true },
       { name: "level1Start", title: "Niveau 1 — date début", optional: true, type: "Date,DateTime" },
       { name: "level1End", title: "Niveau 1 — date fin", optional: true, type: "Date,DateTime" },
       { name: "level1Status", title: "Niveau 1 — statut", optional: true },
@@ -1907,6 +2177,8 @@
     } catch (e) {
       currentTableId = null;
     }
+
+    if (await loadAndRenderDirectMapping()) return;
 
     if (!records || !records.length) {
       allRecords = [];
