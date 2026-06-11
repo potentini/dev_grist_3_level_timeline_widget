@@ -19,57 +19,6 @@
     { key: "level3", level: 3, label: "Niveau 3", required: false }
   ];
 
-  const LEVEL_ALIASES = {
-    1: {
-      name: ["level1Name"],
-      start: ["level1Start"],
-      end: ["level1End"],
-      status: ["level1Status"],
-      responsible: ["level1Responsible"],
-      progress: ["level1Progress"],
-      sourceTable: ["level1SourceTableId"],
-      sourceRow: ["level1SourceRowId"],
-      sourceStartCol: ["level1StartColId"],
-      sourceEndCol: ["level1EndColId"],
-      sourceProgressCol: ["level1ProgressColId"],
-      sourceNameCol: ["level1NameColId"],
-      sourceStatusCol: ["level1StatusColId"],
-      sourceResponsibleCol: ["level1ResponsibleColId"]
-    },
-    2: {
-      name: ["level2Name"],
-      start: ["level2Start"],
-      end: ["level2End"],
-      status: ["level2Status"],
-      responsible: ["level2Responsible"],
-      progress: ["level2Progress"],
-      sourceTable: ["level2SourceTableId"],
-      sourceRow: ["level2SourceRowId"],
-      sourceStartCol: ["level2StartColId"],
-      sourceEndCol: ["level2EndColId"],
-      sourceProgressCol: ["level2ProgressColId"],
-      sourceNameCol: ["level2NameColId"],
-      sourceStatusCol: ["level2StatusColId"],
-      sourceResponsibleCol: ["level2ResponsibleColId"]
-    },
-    3: {
-      name: ["level3Name"],
-      start: ["level3Start"],
-      end: ["level3End"],
-      status: ["level3Status"],
-      responsible: ["level3Responsible"],
-      progress: ["level3Progress"],
-      sourceTable: ["level3SourceTableId"],
-      sourceRow: ["level3SourceRowId"],
-      sourceStartCol: ["level3StartColId"],
-      sourceEndCol: ["level3EndColId"],
-      sourceProgressCol: ["level3ProgressColId"],
-      sourceNameCol: ["level3NameColId"],
-      sourceStatusCol: ["level3StatusColId"],
-      sourceResponsibleCol: ["level3ResponsibleColId"]
-    }
-  };
-
   const FIELD_LABELS = {
     level: "Niveau",
     name: "Nom",
@@ -102,11 +51,9 @@
   let colorField = "level";
   let labelsVisible = true;
   let compactChildren = false;
-  let allowTimelineDateEdit = false;
+  let allowEditing = false;
   let currentTableId = null;
-  let currentMappingsOk = false;
-  let latestMappings = null;
-  let latestWriteSummary = "selectedTable.update";
+  let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
   let directMappingConfig = loadDirectMappingConfig();
   let directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
   let sourceColumnMetaPromise = null;
@@ -185,7 +132,8 @@
       if (s.colorField) colorField = s.colorField;
       if (typeof s.labelsVisible === "boolean") labelsVisible = s.labelsVisible;
       if (typeof s.compactChildren === "boolean") compactChildren = s.compactChildren;
-      if (typeof s.allowTimelineDateEdit === "boolean") allowTimelineDateEdit = s.allowTimelineDateEdit;
+      if (typeof s.allowEditing === "boolean") allowEditing = s.allowEditing;
+      else if (typeof s.allowTimelineDateEdit === "boolean") allowEditing = s.allowTimelineDateEdit;
       if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
       if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
       if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
@@ -211,7 +159,7 @@
     try {
       return normalizeDirectMappingConfig(JSON.parse(window.localStorage.getItem(DIRECT_MAPPING_STORAGE_KEY) || "{}"));
     } catch (e) {
-      console.warn("Impossible de charger le mapping multitable direct :", e);
+      console.warn("Impossible de charger le mapping interne multitable :", e);
       return normalizeDirectMappingConfig({});
     }
   }
@@ -220,7 +168,7 @@
     try {
       window.localStorage.setItem(DIRECT_MAPPING_STORAGE_KEY, JSON.stringify(directMappingConfig));
     } catch (e) {
-      console.warn("Impossible de sauvegarder le mapping multitable direct :", e);
+      console.warn("Impossible de sauvegarder le mapping interne multitable :", e);
     }
   }
 
@@ -235,7 +183,7 @@
         colorField,
         labelsVisible,
         compactChildren,
-        allowTimelineDateEdit,
+        allowEditing,
         expandedNodes,
         visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
         visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
@@ -592,130 +540,6 @@
       responsibleCol: node.source.responsibleCol || data.source.responsibleCol || null
     };
     node.fallbackAliases = data.fallbackAliases || node.fallbackAliases;
-  }
-
-  function buildLogicalRecords(records) {
-    const nodes = new Map();
-    const roots = [];
-    for (const [idx, raw] of (records || []).entries()) {
-      if (!raw) continue;
-      const mapped = grist.mapColumnNames(raw, { mappings: latestMappings });
-      if (!mapped) continue;
-
-      const displayRowId = raw.id || raw.Id || raw.ID;
-
-      function addLevel(levelIndex, parentId, pathLabels) {
-        if (levelIndex >= LEVELS.length) return;
-
-        const levelInfo = LEVELS[levelIndex];
-        const level = levelInfo.level;
-        const cfg = LEVEL_ALIASES[level];
-        const nameValue = mappedValue(mapped, cfg.name);
-        const refs = parseRefValues(nameValue);
-
-        if (!refs.length) {
-          if (!levelInfo.required) addLevel(levelIndex + 1, parentId, pathLabels);
-          return;
-        }
-
-        const sourceEntries = {
-          tableId: mappedEntry(mapped, cfg.sourceTable),
-          rowId: mappedEntry(mapped, cfg.sourceRow),
-          startCol: mappedEntry(mapped, cfg.sourceStartCol),
-          endCol: mappedEntry(mapped, cfg.sourceEndCol),
-          progressCol: mappedEntry(mapped, cfg.sourceProgressCol),
-          nameCol: mappedEntry(mapped, cfg.sourceNameCol),
-          statusCol: mappedEntry(mapped, cfg.sourceStatusCol),
-          responsibleCol: mappedEntry(mapped, cfg.sourceResponsibleCol)
-        };
-
-        refs.forEach((ref, refIndex) => {
-          const label = (ref.label || "").trim();
-          if (!label) return;
-
-          const branchPathLabels = [...pathLabels, label];
-          const sourceRowValues = splitListValue(sourceEntries.rowId.value);
-          const rowIdValue = refs.length <= 1 || sourceRowValues.length === refs.length
-            ? valueAtListIndex(sourceEntries.rowId.value, refIndex, refs.length)
-            : null;
-          const source = {
-            tableId: coalesce(sourceEntries.tableId.value, ref.tableId),
-            rowId: Number(coalesce(rowIdValue, ref.rowId)) || null,
-            startCol: sourceEntries.startCol.value,
-            endCol: sourceEntries.endCol.value,
-            progressCol: sourceEntries.progressCol.value,
-            nameCol: sourceEntries.nameCol.value,
-            statusCol: sourceEntries.statusCol.value,
-            responsibleCol: sourceEntries.responsibleCol.value
-          };
-          const nodeId = makeNodeId(level, branchPathLabels, ref, source, sourceEntries);
-
-          if (!nodes.has(nodeId)) {
-            const node = createEmptyNode({
-              id: nodeId,
-              level,
-              label,
-              parentId,
-              sourceIndex: idx,
-              sourceRowId: displayRowId,
-              source
-            });
-            nodes.set(nodeId, node);
-            if (parentId && nodes.has(parentId)) nodes.get(parentId).children.push(node);
-            else roots.push(node);
-          }
-
-          const startDate = normalizeDate(valueAtListIndex(mappedValue(mapped, cfg.start), refIndex, refs.length));
-          const endDate = normalizeDate(valueAtListIndex(mappedValue(mapped, cfg.end), refIndex, refs.length));
-          mergeNodeData(nodes.get(nodeId), {
-            displayRowId,
-            sourceIndex: idx,
-            startDate,
-            endDate,
-            status: String(valueAtListIndex(mappedValue(mapped, cfg.status), refIndex, refs.length) || ""),
-            responsible: displayValueForField(valueAtListIndex(mappedValue(mapped, cfg.responsible), refIndex, refs.length)),
-            progress: parseProgress(valueAtListIndex(mappedValue(mapped, cfg.progress), refIndex, refs.length)),
-            fieldRawValues: {
-              name: valueAtListIndex(mappedValue(mapped, cfg.name), refIndex, refs.length),
-              status: valueAtListIndex(mappedValue(mapped, cfg.status), refIndex, refs.length),
-              responsible: valueAtListIndex(mappedValue(mapped, cfg.responsible), refIndex, refs.length),
-              progress: valueAtListIndex(mappedValue(mapped, cfg.progress), refIndex, refs.length)
-            },
-            source,
-            fallbackAliases: { name: cfg.name[0], start: cfg.start[0], end: cfg.end[0], status: cfg.status[0], responsible: cfg.responsible[0], progress: cfg.progress[0] }
-          });
-
-          addLevel(levelIndex + 1, nodeId, branchPathLabels);
-        });
-      }
-
-      addLevel(0, null, []);
-    }
-
-    function finalize(node) {
-      let min = node.startDate || null;
-      let max = node.endDate || node.startDate || null;
-      node.children.sort(sortNodes);
-      for (const child of node.children) {
-        finalize(child);
-        if (child.aggStart && (!min || child.aggStart < min)) min = child.aggStart;
-        if (child.aggEnd && (!max || child.aggEnd > max)) max = child.aggEnd;
-        if (!node.status && child.status) node.status = child.status;
-        if (!node.responsible && child.responsible) node.responsible = child.responsible;
-      }
-      node.aggStart = node.startDate || min;
-      node.aggEnd = node.endDate || max || min;
-      node.isMilestone = !node.startDate && !!node.endDate;
-      node.milestoneDate = node.isMilestone ? node.endDate : null;
-      return node;
-    }
-
-    const dedupedRoots = dedupeHierarchySiblings(roots, nodes);
-    dedupedRoots.sort(sortNodes).forEach(finalize);
-    nodeById = nodes;
-    allRecords = Array.from(nodes.values());
-    treeRoots = dedupedRoots;
-    return allRecords;
   }
 
   function sortNodes(a, b) {
@@ -1349,21 +1173,21 @@
     directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
     if (!directMappingModeActive) return false;
     try {
-      setDebugStatus("Chargement direct des tables sources…");
+      setDebugStatus("Chargement interne des tables sources…");
       await buildDirectMultitableRecords();
       const range = computeGlobalRange(allRecords);
       globalMinDate = range.min;
       globalMaxDate = range.max;
       keepOrRecomputeVisibleRange();
       saveState();
-      setDebugStatus(`Mapping direct OK: ${allRecords.length} élément(s)`);
-      setDebugSyncMode("docApi.fetchTable/applyUserActions (mapping direct)");
+      setDebugStatus(`Mapping interne OK: ${allRecords.length} élément(s)`);
+      setDebugSyncMode("docApi.fetchTable/applyUserActions (mapping interne)");
       render();
       return true;
     } catch (err) {
       console.error(err);
-      showToast(err.message || "Erreur de chargement du mapping direct", "error");
-      setDebugStatus("Mapping direct KO");
+      showToast(err.message || "Erreur de chargement du mapping interne", "error");
+      setDebugStatus("Mapping interne KO");
       return true;
     }
   }
@@ -1404,12 +1228,12 @@
 
   function editableTooltipRows(node) {
     const rows = [
-      { field: "name", label: "Titre", value: fieldDisplayValue(node, "name"), editable: true },
-      { field: "start", label: "Début", value: formatDate(node.startDate || node.milestoneDate || node.aggStart), editable: !node.startDate && !!node.endDate },
+      { field: "name", label: "Titre", value: fieldDisplayValue(node, "name"), editable: allowEditing },
+      { field: "start", label: "Début", value: formatDate(node.startDate || node.milestoneDate || node.aggStart), editable: allowEditing && !node.startDate && !!node.endDate },
       { field: "end", label: "Fin", value: formatDate(node.endDate || node.aggEnd || node.milestoneDate), editable: false },
-      { field: "status", label: "Statut", value: fieldDisplayValue(node, "status"), editable: true },
-      { field: "responsible", label: "Responsable", value: fieldDisplayValue(node, "responsible"), editable: true },
-      { field: "progress", label: "Avancement", value: node.progress == null ? "" : `${Math.round(node.progress)}%`, editable: true }
+      { field: "status", label: "Statut", value: fieldDisplayValue(node, "status"), editable: allowEditing },
+      { field: "responsible", label: "Responsable", value: fieldDisplayValue(node, "responsible"), editable: allowEditing },
+      { field: "progress", label: "Avancement", value: node.progress == null ? "" : `${Math.round(node.progress)}%`, editable: allowEditing }
     ];
     return rows
       .filter((row) => row.field === "name" || row.value || row.editable)
@@ -1421,6 +1245,7 @@
   }
 
   function rowTooltipAction(row) {
+    if (!allowEditing) return "Édition bloquée";
     if (row.field === "start") return row.editable ? "Créer une date de début égale à la fin" : "Lecture seule";
     if (row.field === "end") return "Lecture seule";
     return row.editable ? "Modifier" : "Lecture seule";
@@ -1757,6 +1582,10 @@
   }
 
   function setBarCursor(bar, e) {
+    if (!allowEditing) {
+      bar.style.cursor = "default";
+      return;
+    }
     const rect = bar.getBoundingClientRect();
     if (e.clientX - rect.left < 8 || rect.right - e.clientX < 8) bar.style.cursor = "ew-resize";
     else bar.style.cursor = "grab";
@@ -1764,7 +1593,7 @@
 
   function attachBarDrag(bar) {
     bar.addEventListener("mousedown", (e) => {
-      if (e.button !== 0 || !allowTimelineDateEdit) return;
+      if (e.button !== 0 || !allowEditing) return;
       const node = nodeById.get(bar.dataset.nodeId);
       if (!node || !node.explicitDates) {
         showToast("Cette barre est agrégée : mappez les dates/source du niveau pour l’éditer.", "error");
@@ -1795,7 +1624,7 @@
 
   function attachMilestoneDrag(m) {
     m.addEventListener("mousedown", (e) => {
-      if (e.button !== 0 || !allowTimelineDateEdit) return;
+      if (e.button !== 0 || !allowEditing) return;
       const node = nodeById.get(m.dataset.nodeId);
       if (!node || !node.source.rowId) return;
       e.preventDefault();
@@ -1886,17 +1715,6 @@
     }
   }
 
-  function buildFallbackPayload(node, aliasValues) {
-    if (!latestMappings || !node.firstDisplayRowId) return null;
-    const payload = { id: node.firstDisplayRowId, ...(aliasValues || {}) };
-    const mapped = grist.mapColumnNamesBack(payload, { mappings: latestMappings });
-    if (!mapped || typeof mapped !== "object") return null;
-    const id = mapped.id;
-    const fields = cleanRecordForUpdate(mapped);
-    if (id == null || !Object.keys(fields).length) return null;
-    return { id, fields };
-  }
-
   function fieldSourceColumn(node, field) {
     if (field === "name") return node.source.nameCol;
     if (field === "status") return node.source.statusCol;
@@ -1907,11 +1725,8 @@
     return null;
   }
 
-  function fallbackAliasForField(node, field) {
-    return node.fallbackAliases ? node.fallbackAliases[field] : null;
-  }
 
-  async function writeNodeFields(node, sourceFields, fallbackAliasValues, debugLabel) {
+  async function writeNodeFields(node, sourceFields, debugLabel) {
     if (node.source.tableId && node.source.rowId != null && Object.keys(sourceFields).length) {
       await grist.docApi.applyUserActions([["UpdateRecord", node.source.tableId, node.source.rowId, sourceFields]]);
       setDebugSyncMode("docApi.applyUserActions (vraie table source)");
@@ -1919,36 +1734,15 @@
       return;
     }
 
-    const fallback = buildFallbackPayload(node, fallbackAliasValues);
-    if (fallback) {
-      try {
-        await grist.selectedTable.update([fallback]);
-        setDebugSyncMode("selectedTable.update (fallback mapping)");
-        setDebugAction(`Update ligne consolidée ${fallback.id}: ${debugLabel}`);
-      } catch (err) {
-        if (!currentTableId) throw err;
-        await grist.docApi.applyUserActions([["UpdateRecord", currentTableId, fallback.id, fallback.fields]]);
-        setDebugSyncMode("docApi.applyUserActions (fallback table sélectionnée)");
-        setDebugAction(`Update ${currentTableId}#${fallback.id}: ${debugLabel}`);
-      }
-      return;
-    }
-
-    throw new Error("Aucune cible d’écriture. Mappez table source, id source et colonnes source du niveau.");
+    throw new Error("Aucune cible d’écriture. Configurez le mapping interne avec la table, la ligne et la colonne source du niveau.");
   }
 
   async function updateNodeDates(node, newStart, newEnd) {
+    if (!allowEditing) throw new Error("L’édition est bloquée.");
     const sourceFields = {};
-    const fallbackAliasValues = {};
-    if (newStart) {
-      if (node.source.startCol) sourceFields[node.source.startCol] = toGristDateString(newStart);
-      if (node.fallbackAliases.start) fallbackAliasValues[node.fallbackAliases.start] = toGristDateString(newStart);
-    }
-    if (newEnd) {
-      if (node.source.endCol) sourceFields[node.source.endCol] = toGristDateString(newEnd);
-      if (node.fallbackAliases.end) fallbackAliasValues[node.fallbackAliases.end] = toGristDateString(newEnd);
-    }
-    await writeNodeFields(node, sourceFields, fallbackAliasValues, "dates");
+    if (newStart && node.source.startCol) sourceFields[node.source.startCol] = toGristDateString(newStart);
+    if (newEnd && node.source.endCol) sourceFields[node.source.endCol] = toGristDateString(newEnd);
+    await writeNodeFields(node, sourceFields, "dates");
     applyLocalDateChange(node, newStart, newEnd);
   }
 
@@ -1983,6 +1777,7 @@
   }
 
   async function updateTooltipField(node, field, rawValue) {
+    if (!allowEditing) throw new Error("L’édition est bloquée.");
     if (field === "start") {
       if (node.startDate || !node.endDate) throw new Error("La date de début ne peut être créée que pour un jalon avec une date de fin.");
       await updateNodeDates(node, node.endDate, node.endDate);
@@ -1991,12 +1786,9 @@
 
     const value = coerceTooltipValueForSource(node, field, rawValue);
     const sourceFields = {};
-    const fallbackAliasValues = {};
     const sourceCol = fieldSourceColumn(node, field);
-    const fallbackAlias = fallbackAliasForField(node, field);
     if (sourceCol) sourceFields[sourceCol] = value;
-    if (fallbackAlias) fallbackAliasValues[fallbackAlias] = value;
-    await writeNodeFields(node, sourceFields, fallbackAliasValues, FIELD_LABELS[field] || field);
+    await writeNodeFields(node, sourceFields, FIELD_LABELS[field] || field);
     await refreshAfterWrite(node, field, value);
   }
 
@@ -2060,12 +1852,11 @@
   }
 
   function refreshTableInfo() {
-    const mappedCols = latestMappings && latestMappings.columns ? Object.keys(latestMappings.columns).length : latestMappings ? Object.keys(latestMappings).length : 0;
     const routed = allRecords.filter((n) => n.source.tableId && n.source.rowId != null).length;
     const directTables = LEVELS.map((levelInfo) => directMappingConfig.levels[levelInfo.level]?.tableId).filter(Boolean).join(" → ");
     if (mappingInfoEl) mappingInfoEl.textContent = directMappingModeActive
-      ? `Mapping direct multitable : ${directTables || "aucune table"}, écritures routées = ${routed}/${allRecords.length}`
-      : `Mapping Grist actif : ${currentMappingsOk ? "oui" : "non"}, table liée = ${currentTableId || "inconnue"}, mappings reçus = ${mappedCols}, niveaux = 1/2/3, écritures routées = ${routed}/${allRecords.length}`;
+      ? `Mapping interne multitable : ${directTables || "aucune table"}, écritures routées = ${routed}/${allRecords.length}`
+      : "Mapping interne multitable : à configurer avec le bouton Mapping";
     setDebugSyncMode(latestWriteSummary);
   }
 
@@ -2094,7 +1885,7 @@
 
   function render() {
     if (!allRecords.length) {
-      taskListEl.innerHTML = '<div class="empty">En attente de données ou du mapping niveau 1…</div>';
+      taskListEl.innerHTML = '<div class="empty">En attente du mapping interne…</div>';
       timelineGridEl.innerHTML = "";
       yearsRowEl.innerHTML = monthsRowEl.innerHTML = weeksRowEl.innerHTML = daysRowEl.innerHTML = "";
       currentPeriodEl.textContent = "–";
@@ -2123,6 +1914,10 @@
 
       const saveBtn = e.target.closest(".tooltip-save");
       if (saveBtn) {
+        if (!allowEditing) {
+          showToast("L’édition est bloquée", "error");
+          return;
+        }
         const activeInput = tooltipEl.querySelector("[data-edit-input]");
         try {
           await updateTooltipField(node, tooltipState.editingField, readTooltipEditValue(activeInput));
@@ -2138,7 +1933,7 @@
       }
 
       const row = e.target.closest(".tooltip-edit-row.editable");
-      if (!row) return;
+      if (!row || !allowEditing) return;
       const field = row.dataset.field;
       if (field === "start") {
         try {
@@ -2218,9 +2013,14 @@
     render();
   });
   toggleDateEditBtn.addEventListener("click", () => {
-    allowTimelineDateEdit = !allowTimelineDateEdit;
-    toggleDateEditBtn.textContent = allowTimelineDateEdit ? "Dates: édition autorisée" : "Dates: édition bloquée";
-    toggleDateEditBtn.classList.toggle("active", allowTimelineDateEdit);
+    allowEditing = !allowEditing;
+    toggleDateEditBtn.textContent = allowEditing ? "Édition autorisée" : "Édition bloquée";
+    toggleDateEditBtn.classList.toggle("active", allowEditing);
+    if (!allowEditing && tooltipState.editingField) {
+      tooltipState.editingField = null;
+      tooltipState.draftValue = null;
+      refreshActiveTooltip();
+    }
     saveState();
   });
   expandAllBtn.addEventListener("click", () => {
@@ -2260,13 +2060,13 @@
     }).join("");
 
     mappingPanelEl.innerHTML = `
-      <div><strong>Mapping direct multitable</strong> : choisissez une table source par niveau, puis les champs à lire et à modifier. Le niveau 2 doit pointer vers le niveau 1, et le niveau 3 vers le niveau 2, via une colonne parent.</div>
+      <div><strong>Mapping interne multitable</strong> : choisissez une table source par niveau, puis les champs à lire et à modifier. Le niveau 2 doit pointer vers le niveau 1, et le niveau 3 vers le niveau 2, via une colonne parent.</div>
       ${levelBlocks}
       <div class="mapping-actions">
         <button class="btn btn-small" id="reloadDirectMappingBtn">Recharger depuis les tables</button>
-        <button class="btn btn-small" id="resetManualMappingBtn">Réinitialiser mapping direct</button>
+        <button class="btn btn-small" id="resetManualMappingBtn">Réinitialiser mapping interne</button>
       </div>
-      <div class="mapping-hint">Le sélecteur de colonnes Grist reste disponible comme compatibilité, mais dès qu’une table est choisie ici le widget utilise ce mapping direct pour identifier les lignes et colonnes sources.</div>
+      <div class="mapping-hint">Le widget utilise uniquement ce mapping interne pour identifier les lignes et colonnes sources ; le mapping natif Grist n’est plus requis.</div>
     `;
   }
 
@@ -2298,7 +2098,7 @@
         saveDirectMappingConfig();
         directMappingModeActive = false;
         renderDirectMappingPanel();
-        showToast("Mapping direct réinitialisé", "success");
+        showToast("Mapping interne réinitialisé", "success");
         return;
       }
       if (e.target.closest("#reloadDirectMappingBtn")) await loadAndRenderDirectMapping();
@@ -2322,66 +2122,17 @@
     });
   }
 
-  toggleDateEditBtn.textContent = allowTimelineDateEdit ? "Dates: édition autorisée" : "Dates: édition bloquée";
-  toggleDateEditBtn.classList.toggle("active", allowTimelineDateEdit);
+  toggleDateEditBtn.textContent = allowEditing ? "Édition autorisée" : "Édition bloquée";
+  toggleDateEditBtn.classList.toggle("active", allowEditing);
   toggleLabelsBtn.textContent = labelsVisible ? "Masquer labels" : "Afficher labels";
   groupChildrenBtn.textContent = compactChildren ? "Niveaux bas : 1 ligne" : "Niveaux bas : multi-lignes";
   updateExpandAllButton();
   updateZoomButtons();
 
-  grist.ready({
-    requiredAccess: "full",
-    columns: [
-      { name: "level1Name", title: "Niveau 1 — nom", optional: true },
-      { name: "level1Start", title: "Niveau 1 — date début", optional: true, type: "Date,DateTime" },
-      { name: "level1End", title: "Niveau 1 — date fin", optional: true, type: "Date,DateTime" },
-      { name: "level1Status", title: "Niveau 1 — statut", optional: true },
-      { name: "level1Responsible", title: "Niveau 1 — responsable", optional: true },
-      { name: "level1Progress", title: "Niveau 1 — avancement", optional: true },
-      { name: "level1SourceTableId", title: "Niveau 1 — table source", optional: true },
-      { name: "level1SourceRowId", title: "Niveau 1 — id source", optional: true },
-      { name: "level1StartColId", title: "Niveau 1 — colonne début source", optional: true },
-      { name: "level1EndColId", title: "Niveau 1 — colonne fin source", optional: true },
-      { name: "level1ProgressColId", title: "Niveau 1 — colonne avancement source", optional: true },
-      { name: "level1NameColId", title: "Niveau 1 — colonne titre source", optional: true },
-      { name: "level1StatusColId", title: "Niveau 1 — colonne statut source", optional: true },
-      { name: "level1ResponsibleColId", title: "Niveau 1 — colonne responsable source", optional: true },
+  grist.ready({ requiredAccess: "full" });
 
-      { name: "level2Name", title: "Niveau 2 — nom", optional: true },
-      { name: "level2Start", title: "Niveau 2 — date début", optional: true, type: "Date,DateTime" },
-      { name: "level2End", title: "Niveau 2 — date fin", optional: true, type: "Date,DateTime" },
-      { name: "level2Status", title: "Niveau 2 — statut", optional: true },
-      { name: "level2Responsible", title: "Niveau 2 — responsable", optional: true },
-      { name: "level2Progress", title: "Niveau 2 — avancement", optional: true },
-      { name: "level2SourceTableId", title: "Niveau 2 — table source", optional: true },
-      { name: "level2SourceRowId", title: "Niveau 2 — id source", optional: true },
-      { name: "level2StartColId", title: "Niveau 2 — colonne début source", optional: true },
-      { name: "level2EndColId", title: "Niveau 2 — colonne fin source", optional: true },
-      { name: "level2ProgressColId", title: "Niveau 2 — colonne avancement source", optional: true },
-      { name: "level2NameColId", title: "Niveau 2 — colonne titre source", optional: true },
-      { name: "level2StatusColId", title: "Niveau 2 — colonne statut source", optional: true },
-      { name: "level2ResponsibleColId", title: "Niveau 2 — colonne responsable source", optional: true },
-
-      { name: "level3Name", title: "Niveau 3 — nom", optional: true },
-      { name: "level3Start", title: "Niveau 3 — date début", optional: true, type: "Date,DateTime" },
-      { name: "level3End", title: "Niveau 3 — date fin", optional: true, type: "Date,DateTime" },
-      { name: "level3Status", title: "Niveau 3 — statut", optional: true },
-      { name: "level3Responsible", title: "Niveau 3 — responsable", optional: true },
-      { name: "level3Progress", title: "Niveau 3 — avancement", optional: true },
-      { name: "level3SourceTableId", title: "Niveau 3 — table source", optional: true },
-      { name: "level3SourceRowId", title: "Niveau 3 — id source", optional: true },
-      { name: "level3StartColId", title: "Niveau 3 — colonne début source", optional: true },
-      { name: "level3EndColId", title: "Niveau 3 — colonne fin source", optional: true },
-      { name: "level3ProgressColId", title: "Niveau 3 — colonne avancement source", optional: true },
-      { name: "level3NameColId", title: "Niveau 3 — colonne titre source", optional: true },
-      { name: "level3StatusColId", title: "Niveau 3 — colonne statut source", optional: true },
-      { name: "level3ResponsibleColId", title: "Niveau 3 — colonne responsable source", optional: true },
-    ]
-  });
-
-  grist.onRecords(async function (records, mappings) {
+  grist.onRecords(async function (records) {
     setDebugStatus(`onRecords reçu: ${records ? records.length : 0} ligne(s)`);
-    latestMappings = mappings || null;
     try {
       currentTableId = await grist.selectedTable.getTableId();
     } catch (e) {
@@ -2390,33 +2141,14 @@
 
     if (await loadAndRenderDirectMapping()) return;
 
-    if (!records || !records.length) {
-      allRecords = [];
-      treeRoots = [];
-      flatTracks = [];
-      nodeById = new Map();
-      globalMinDate = null;
-      globalMaxDate = null;
-      currentMappingsOk = false;
-      render();
-      refreshTableInfo();
-      return;
-    }
-
-    try {
-      currentMappingsOk = !!grist.mapColumnNames(records[0], { mappings: latestMappings });
-      setDebugStatus(currentMappingsOk ? "Mapping OK" : "Mapping KO");
-    } catch (e) {
-      currentMappingsOk = false;
-      setDebugStatus("Mapping KO");
-    }
-
-    buildLogicalRecords(records);
-    const range = computeGlobalRange(allRecords);
-    globalMinDate = range.min;
-    globalMaxDate = range.max;
-    keepOrRecomputeVisibleRange();
-    saveState();
+    allRecords = [];
+    treeRoots = [];
+    flatTracks = [];
+    nodeById = new Map();
+    globalMinDate = null;
+    globalMaxDate = null;
+    setDebugStatus("Mapping interne à configurer");
     render();
+    refreshTableInfo();
   });
 })();
