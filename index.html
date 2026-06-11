@@ -589,6 +589,15 @@
         font-weight: 700;
       }
 
+      .tooltip-edit-row small {
+        display: block;
+        margin-top: 1px;
+        color: rgba(255, 255, 255, 0.52);
+        font-size: 0.62rem;
+        font-weight: 600;
+        line-height: 1.15;
+      }
+
       .tooltip-edit-row strong {
         overflow: hidden;
         text-overflow: ellipsis;
@@ -596,7 +605,8 @@
         font-weight: 700;
       }
 
-      .tooltip-edit-row input {
+      .tooltip-edit-row input,
+      .tooltip-edit-row select {
         min-width: 0;
         width: 100%;
         border: 1px solid rgba(255, 255, 255, 0.28);
@@ -605,6 +615,10 @@
         background: #fff;
         color: var(--text);
         font: inherit;
+      }
+
+      .tooltip-edit-row select[multiple] {
+        min-height: 74px;
       }
 
       .toast-container {
