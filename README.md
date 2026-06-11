@@ -19,9 +19,9 @@ Le widget peut maintenant fonctionner de deux façons :
 - Navigation temporelle : précédent / suivant / aujourd’hui, avec aujourd’hui placé par défaut dans le deuxième tiers de la timeline et un pas de déplacement très réduit.
 - Repli / dépli global et par nœud hiérarchique.
 - Coloration configurable par niveau, nom, statut, responsable, avancement, table source ou dates.
-- Infobulles riches au survol : dates, niveau, statut, responsable, avancement, source.
-- Édition depuis l’infobulle en respectant le type de la colonne source (texte, numérique, référence, choix, choix multiples, etc.) et affichage des choix disponibles pour les champs Choice/ChoiceList.
-- Édition des dates par glisser-déposer sur les barres explicitement datées.
+- Infobulles compactes au survol : champs essentiels sans détail de type de colonne ni liste de choix.
+- Édition depuis l’infobulle en respectant le type de la colonne source (texte, numérique, référence, choix, choix multiples, etc.) sans encombrer l’affichage au repos.
+- Édition des dates par glisser-déposer et redimensionnement des bordures sur les barres explicitement datées, y compris les tâches d’un seul jour.
 - Routage d’écriture vers les tables sources via `grist.docApi.applyUserActions`.
 - Persistance locale de l’état UI via `localStorage`.
 
