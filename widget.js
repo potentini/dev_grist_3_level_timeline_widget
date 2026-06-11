@@ -112,6 +112,7 @@
   let sourceColumnMetaPromise = null;
   const sourceColumnMetaCache = new Map();
   const tableMetaCache = new Map();
+  const refOptionsCache = new Map();
   const tooltipState = { nodeId: null, editingField: null, draftValue: null, forceRefresh: false };
 
   const mappingInfoEl = document.getElementById("mappingInfo");
@@ -421,6 +422,18 @@
     return splitListValue(value).map(parseRefValue).filter((ref) => (ref.label || "").trim());
   }
 
+  function displayValueForField(value) {
+    const refs = parseRefValues(value);
+    if (refs.length) return refs.map((ref) => ref.label).join(", ");
+    return value == null ? "" : String(value);
+  }
+
+  function rawValueForField(node, field) {
+    return node?.fieldRawValues && Object.prototype.hasOwnProperty.call(node.fieldRawValues, field)
+      ? node.fieldRawValues[field]
+      : fieldDisplayValue(node, field);
+  }
+
   function parseProgress(value) {
     if (value == null || value === "") return null;
     if (typeof value === "string") {
@@ -480,6 +493,7 @@
     if (!target.status && duplicate.status) target.status = duplicate.status;
     if (!target.responsible && duplicate.responsible) target.responsible = duplicate.responsible;
     if (target.progress == null && duplicate.progress != null) target.progress = duplicate.progress;
+    target.fieldRawValues = { ...(duplicate.fieldRawValues || {}), ...(target.fieldRawValues || {}) };
     if (target.order == null || (duplicate.order != null && duplicate.order < target.order)) target.order = duplicate.order;
 
     target.source = {
@@ -545,7 +559,8 @@
       order: null,
       source: source || {},
       fallbackAliases: {},
-      rawRows: []
+      rawRows: [],
+      fieldRawValues: {}
     };
   }
 
@@ -562,6 +577,7 @@
     if (!node.status && data.status) node.status = data.status;
     if (!node.responsible && data.responsible) node.responsible = data.responsible;
     if (node.progress == null && data.progress != null) node.progress = data.progress;
+    node.fieldRawValues = { ...(node.fieldRawValues || {}), ...(data.fieldRawValues || {}) };
     if (node.order == null && data.order != null) node.order = data.order;
 
     node.source = {
@@ -656,8 +672,14 @@
             startDate,
             endDate,
             status: String(valueAtListIndex(mappedValue(mapped, cfg.status), refIndex, refs.length) || ""),
-            responsible: String(valueAtListIndex(mappedValue(mapped, cfg.responsible), refIndex, refs.length) || ""),
+            responsible: displayValueForField(valueAtListIndex(mappedValue(mapped, cfg.responsible), refIndex, refs.length)),
             progress: parseProgress(valueAtListIndex(mappedValue(mapped, cfg.progress), refIndex, refs.length)),
+            fieldRawValues: {
+              name: valueAtListIndex(mappedValue(mapped, cfg.name), refIndex, refs.length),
+              status: valueAtListIndex(mappedValue(mapped, cfg.status), refIndex, refs.length),
+              responsible: valueAtListIndex(mappedValue(mapped, cfg.responsible), refIndex, refs.length),
+              progress: valueAtListIndex(mappedValue(mapped, cfg.progress), refIndex, refs.length)
+            },
             source,
             fallbackAliases: { name: cfg.name[0], start: cfg.start[0], end: cfg.end[0], status: cfg.status[0], responsible: cfg.responsible[0], progress: cfg.progress[0] }
           });
@@ -1097,6 +1119,11 @@
     return String(type || "").split(":")[0];
   }
 
+  function refTableIdFromType(type) {
+    const parts = String(type || "").split(":");
+    return (parts[0] === "Ref" || parts[0] === "RefList") && parts[1] ? parts[1] : null;
+  }
+
   function friendlyFieldType(type) {
     const base = baseGristType(type);
     if (base === "Choice") return "choix";
@@ -1128,16 +1155,26 @@
         }
       }
       sourceColumnMetaCache.clear();
-      for (const col of rowsFromGristTable(columnsRaw)) {
+      const columnRows = rowsFromGristTable(columnsRaw);
+      const colIdByRecordId = new Map();
+      for (const col of columnRows) {
+        const tableId = tableIdByRecordId.get(Number(col.parentId));
+        const colId = col.colId ? String(col.colId) : null;
+        if (tableId && colId && col.id != null) colIdByRecordId.set(Number(col.id), { tableId, colId });
+      }
+      for (const col of columnRows) {
         const tableId = tableIdByRecordId.get(Number(col.parentId));
         const colId = col.colId ? String(col.colId) : null;
         if (!tableId || !colId) continue;
         const widgetOptions = parseWidgetOptions(col.widgetOptions);
         const type = String(col.type || "");
+        const visibleCol = col.visibleCol != null ? colIdByRecordId.get(Number(col.visibleCol)) : null;
         sourceColumnMetaCache.set(metadataKey(tableId, colId), {
           tableId,
           colId,
           type,
+          refTableId: refTableIdFromType(type),
+          visibleColId: visibleCol?.colId || widgetOptions.visibleCol || widgetOptions.displayCol || null,
           typeLabel: friendlyFieldType(type),
           choices: normalizeChoices(widgetOptions),
           label: col.label || colId,
@@ -1223,8 +1260,15 @@
     node.endDate = endDate;
     node.explicitDates = !!(startDate || endDate);
     node.status = String(directFieldValue(row, cfg, "status") || "");
-    node.responsible = String(directFieldValue(row, cfg, "responsible") || "");
+    const responsibleRaw = directFieldValue(row, cfg, "responsible");
+    node.responsible = displayValueForField(responsibleRaw);
     node.progress = parseProgress(directFieldValue(row, cfg, "progress"));
+    node.fieldRawValues = {
+      name: directFieldValue(row, cfg, "name"),
+      status: directFieldValue(row, cfg, "status"),
+      responsible: responsibleRaw,
+      progress: directFieldValue(row, cfg, "progress")
+    };
     node.rawRows = [rowId];
     return node;
   }
@@ -1346,7 +1390,12 @@
   function fieldDisplayValue(node, field) {
     if (field === "name") return node.label || "";
     if (field === "status") return node.status || "";
-    if (field === "responsible") return node.responsible || "";
+    if (field === "responsible") {
+      const meta = sourceColumnMeta(node, field);
+      const raw = node.fieldRawValues?.responsible;
+      if (meta?.refTableId && raw != null && refOptionsCache.has(refOptionsKey(meta))) return labelForRefValue(meta, raw) || node.responsible || "";
+      return node.responsible || "";
+    }
     if (field === "progress") return node.progress == null ? "" : Math.round(node.progress);
     if (field === "start") return formatDate(node.startDate || node.milestoneDate || node.aggStart);
     return "";
@@ -1401,6 +1450,74 @@
     return `<select data-edit-input ${multiple ? "multiple" : ""}>${empty}${optionHtml}</select>`;
   }
 
+
+  function refOptionsKey(meta) {
+    return `${meta?.tableId || ""}.${meta?.colId || ""}`;
+  }
+
+  function chooseRefLabelColumn(rows, meta) {
+    if (meta?.visibleColId) return meta.visibleColId;
+    const preferred = ["Name", "name", "Title", "title", "Nom", "nom"];
+    for (const col of preferred) {
+      if (rows.some((row) => row && row[col] != null && String(row[col]).trim())) return col;
+    }
+    const sample = rows.find(Boolean) || {};
+    return Object.keys(sample).find((col) => col !== "id" && col !== "Id" && col !== "ID") || "id";
+  }
+
+  async function loadRefOptions(meta) {
+    const refTableId = meta?.refTableId;
+    if (!refTableId) return [];
+    const key = refOptionsKey(meta);
+    if (refOptionsCache.has(key)) return refOptionsCache.get(key);
+    const rows = rowsFromGristTable(await grist.docApi.fetchTable(refTableId));
+    const labelCol = chooseRefLabelColumn(rows, meta);
+    const options = rows.map((row) => {
+      const id = Number(row.id ?? row.Id ?? row.ID);
+      if (!Number.isFinite(id)) return null;
+      const rawLabel = row[labelCol] ?? row.Name ?? row.name ?? row.Title ?? row.title ?? id;
+      const label = displayValueForField(rawLabel) || String(id);
+      return { value: String(id), label };
+    }).filter(Boolean).sort((a, b) => a.label.localeCompare(b.label, "fr"));
+    refOptionsCache.set(key, options);
+    return options;
+  }
+
+  function scheduleRefOptionsRefresh(node) {
+    const rows = editableTooltipRows(node).filter((row) => {
+      const baseType = baseGristType(row.meta?.type);
+      return (baseType === "Ref" || baseType === "RefList") && row.meta?.refTableId && !refOptionsCache.has(refOptionsKey(row.meta));
+    });
+    if (!rows.length) return;
+    Promise.all(rows.map((row) => loadRefOptions(row.meta)))
+      .then(() => {
+        if (tooltipState.nodeId === node.id && tooltipEl?.classList.contains("visible")) {
+          tooltipState.forceRefresh = true;
+          refreshActiveTooltip();
+        }
+      })
+      .catch((err) => console.warn("Impossible de charger les options de référence :", err));
+  }
+
+  function selectedRefValues(raw, multiple) {
+    const refs = multiple ? parseRefValues(raw) : [parseRefValue(raw)];
+    const ids = refs.map((ref) => ref.rowId).filter((id) => id != null).map(String);
+    if (ids.length) return ids;
+    return selectedChoiceValues(raw, multiple);
+  }
+
+  function buildRefInput(row, raw) {
+    const multiple = baseGristType(row.meta?.type) === "RefList";
+    const selected = selectedRefValues(raw, multiple);
+    const options = refOptionsCache.get(refOptionsKey(row.meta)) || [];
+    const optionHtml = options.map((option) => {
+      const isSelected = selected.includes(option.value);
+      return `<option value="${escapeHtml(option.value)}" ${isSelected ? "selected" : ""}>${escapeHtml(option.label)}</option>`;
+    }).join("");
+    const empty = multiple ? "" : `<option value="" ${selected.length ? "" : "selected"}>—</option>`;
+    return `<select data-edit-input ${multiple ? "multiple" : ""}>${empty}${optionHtml}</select>`;
+  }
+
   function buildTooltipField(row, node) {
     const isEditing = tooltipState.nodeId === node.id && tooltipState.editingField === row.field;
     const classes = ["tooltip-edit-row"];
@@ -1414,11 +1531,13 @@
         <span>${escapeHtml(row.label)} <small>${escapeHtml(typeHint)}</small></span><strong>${escapeHtml(value)}</strong>
       </button>`;
     }
-    const raw = tooltipState.draftValue ?? fieldDisplayValue(node, row.field);
+    const raw = tooltipState.draftValue ?? rawValueForField(node, row.field);
     const baseType = baseGristType(row.meta?.type);
     let input;
     if ((baseType === "Choice" || baseType === "ChoiceList") && row.meta?.choices?.length) {
       input = buildChoiceInput(row, raw);
+    } else if ((baseType === "Ref" || baseType === "RefList") && row.meta?.refTableId) {
+      input = buildRefInput(row, raw);
     } else if (row.field === "progress" || baseType === "Numeric" || baseType === "Int" || baseType === "Ref") {
       const attrs = row.field === "progress" ? ' min="0" max="100" step="1"' : ' step="any"';
       input = `<input data-edit-input type="number"${attrs} value="${escapeHtml(raw)}" />`;
@@ -1448,6 +1567,7 @@
   function showTooltip(x, y, node, start, end) {
     if (!tooltipEl) return;
     scheduleTooltipMetadataRefresh(node);
+    scheduleRefOptionsRefresh(node);
     const sameVisibleNode = tooltipState.nodeId === node.id && tooltipEl.classList.contains("visible");
     if (sameVisibleNode && !tooltipState.forceRefresh) return;
     tooltipState.forceRefresh = false;
@@ -1576,6 +1696,31 @@
 
       const s = normalizeDate(start);
       const e = normalizeDate(end);
+      if (diffInDays(s, e) === 0) {
+        const frac = dateToCenterFrac(s);
+        if (frac == null) return;
+        const x = frac * containerWidth;
+        const centerY = trackIndex * rowHeight + rowHeight / 2;
+        const circle = document.createElement("div");
+        circle.className = `gantt-zero-duration level-${node.level}` + (node.children.length ? " parent" : "");
+        circle.style.left = x.toFixed(1) + "px";
+        circle.style.top = centerY.toFixed(1) + "px";
+        circle.style.background = getColorForNode(node);
+        circle.dataset.nodeId = node.id;
+        circle.addEventListener("mousemove", (ev) => showTooltip(ev.clientX, ev.clientY, node, s, e));
+        circle.addEventListener("mouseenter", (ev) => showTooltip(ev.clientX, ev.clientY, node, s, e));
+        timelineGridEl.appendChild(circle);
+        if (labelsVisible && !hideLabel) {
+          const label = document.createElement("span");
+          label.className = "milestone-label";
+          label.textContent = node.label;
+          label.style.left = (x + 18) + "px";
+          label.style.top = centerY + "px";
+          timelineGridEl.appendChild(label);
+        }
+        return;
+      }
+
       const leftFrac = dateToFrac(s);
       const rightFrac = dateToFrac(e);
       if (leftFrac == null || rightFrac == null) return;
@@ -1814,6 +1959,7 @@
       if (node.fallbackAliases.end) fallbackAliasValues[node.fallbackAliases.end] = toGristDateString(newEnd);
     }
     await writeNodeFields(node, sourceFields, fallbackAliasValues, "dates");
+    applyLocalDateChange(node, newStart, newEnd);
   }
 
   function coerceTooltipValueForSource(node, field, rawValue) {
@@ -1830,6 +1976,11 @@
       const values = Array.isArray(rawValue) ? rawValue : splitListValue(rawValue);
       const choices = values.map((value) => String(value).trim()).filter(Boolean);
       return choices.length ? ["L", ...choices] : ["L"];
+    }
+    if (baseType === "RefList") {
+      const values = Array.isArray(rawValue) ? rawValue : splitListValue(rawValue);
+      const refs = values.map((value) => Number(value)).filter(Number.isFinite).map(Math.trunc);
+      return refs.length ? ["L", ...refs] : ["L"];
     }
     if (baseType === "Numeric" || baseType === "Int" || baseType === "Ref") {
       if (String(rawValue).trim() === "") return null;
@@ -1856,6 +2007,66 @@
     if (sourceCol) sourceFields[sourceCol] = value;
     if (fallbackAlias) fallbackAliasValues[fallbackAlias] = value;
     await writeNodeFields(node, sourceFields, fallbackAliasValues, FIELD_LABELS[field] || field);
+    await refreshAfterWrite(node, field, value);
+  }
+
+
+  function finalizeTreeDates() {
+    function finalize(node) {
+      let min = node.startDate || null;
+      let max = node.endDate || node.startDate || null;
+      node.children.sort(sortNodes);
+      for (const child of node.children) {
+        finalize(child);
+        if (child.aggStart && (!min || child.aggStart < min)) min = child.aggStart;
+        if (child.aggEnd && (!max || child.aggEnd > max)) max = child.aggEnd;
+      }
+      node.aggStart = node.startDate || min;
+      node.aggEnd = node.endDate || max || min;
+      node.isMilestone = !node.startDate && !!node.endDate;
+      node.milestoneDate = node.isMilestone ? node.endDate : null;
+    }
+    treeRoots.forEach(finalize);
+    const range = computeGlobalRange(allRecords);
+    globalMinDate = range.min;
+    globalMaxDate = range.max;
+    keepOrRecomputeVisibleRange();
+  }
+
+  function labelForRefValue(meta, value) {
+    const options = refOptionsCache.get(refOptionsKey(meta)) || [];
+    const byValue = new Map(options.map((option) => [option.value, option.label]));
+    const values = Array.isArray(value) ? value : splitListValue(value);
+    const labels = values.map((item) => byValue.get(String(item)) || parseRefValue(item).label).filter(Boolean);
+    return labels.join(", ");
+  }
+
+  function applyLocalTooltipValue(node, field, value) {
+    node.fieldRawValues = { ...(node.fieldRawValues || {}), [field]: value };
+    if (field === "name") node.label = displayValueForField(value) || node.label;
+    else if (field === "status") node.status = displayValueForField(value);
+    else if (field === "responsible") {
+      const meta = sourceColumnMeta(node, field);
+      node.responsible = (meta?.refTableId ? labelForRefValue(meta, value) : displayValueForField(value)) || "";
+    } else if (field === "progress") node.progress = parseProgress(value);
+  }
+
+  function applyLocalDateChange(node, newStart, newEnd) {
+    if (newStart) node.startDate = normalizeDate(newStart);
+    if (newEnd) node.endDate = normalizeDate(newEnd);
+    node.explicitDates = !!(node.startDate || node.endDate);
+    finalizeTreeDates();
+    render();
+  }
+
+  async function refreshAfterWrite(node, field, value) {
+    if (directMappingModeActive) {
+      await loadAndRenderDirectMapping();
+      return;
+    }
+    applyLocalTooltipValue(node, field, value);
+    finalizeTreeDates();
+    render();
   }
 
   function refreshTableInfo() {
@@ -1947,8 +2158,14 @@
         }
         return;
       }
+      const rowInfo = editableTooltipRows(node).find((info) => info.field === field);
+      const baseType = baseGristType(rowInfo?.meta?.type);
+      if ((baseType === "Ref" || baseType === "RefList") && rowInfo?.meta?.refTableId) {
+        try { await loadRefOptions(rowInfo.meta); }
+        catch (err) { console.warn("Impossible de charger les options de référence :", err); }
+      }
       tooltipState.editingField = field;
-      tooltipState.draftValue = fieldDisplayValue(node, field);
+      tooltipState.draftValue = rawValueForField(node, field);
       refreshActiveTooltip();
     });
 
@@ -1974,7 +2191,7 @@
   }
 
   document.addEventListener("click", (e) => {
-    if (e.target.closest(".gantt-bar, .gantt-milestone, #tooltip")) return;
+    if (e.target.closest(".gantt-bar, .gantt-milestone, .gantt-zero-duration, #tooltip")) return;
     hideTooltip();
   });
 
