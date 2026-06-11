@@ -114,6 +114,7 @@
   const tableMetaCache = new Map();
   const refOptionsCache = new Map();
   const tooltipState = { nodeId: null, editingField: null, draftValue: null, forceRefresh: false };
+  let tooltipHideTimer = null;
 
   const mappingInfoEl = document.getElementById("mappingInfo");
   const debugStatusEl = document.getElementById("debugStatus");
@@ -1419,17 +1420,10 @@
       });
   }
 
-  function rowTypeHint(row, node) {
-    if (row.field === "start") return row.editable ? "jalon → tâche" : "lecture seule";
-    if (row.field === "end") return "lecture seule";
-    if (row.meta) {
-      const choices = row.meta.choices?.length
-        ? ` · choix: ${row.meta.choices.slice(0, 5).join(", ")}${row.meta.choices.length > 5 ? "…" : ""}`
-        : "";
-      return `${row.meta.typeLabel}${choices} · ${row.meta.tableId}.${row.meta.colId}`;
-    }
-    if (row.sourceCol && node.source.tableId) return `type source… · ${node.source.tableId}.${row.sourceCol}`;
-    return "fallback table liée";
+  function rowTooltipAction(row) {
+    if (row.field === "start") return row.editable ? "Créer une date de début égale à la fin" : "Lecture seule";
+    if (row.field === "end") return "Lecture seule";
+    return row.editable ? "Modifier" : "Lecture seule";
   }
 
   function selectedChoiceValues(raw, multiple) {
@@ -1523,12 +1517,11 @@
     const classes = ["tooltip-edit-row"];
     if (row.editable) classes.push("editable");
     if (isEditing) classes.push("editing");
-    const hint = row.field === "start" ? "Créer une date de début égale à la fin" : `Modifier (${rowTypeHint(row, node)})`;
+    const hint = rowTooltipAction(row);
     const value = row.value || "—";
-    const typeHint = rowTypeHint(row, node);
     if (!isEditing) {
       return `<button type="button" class="${classes.join(" ")}" data-field="${row.field}" ${row.editable ? `title="${escapeHtml(hint)}"` : "disabled"}>
-        <span>${escapeHtml(row.label)} <small>${escapeHtml(typeHint)}</small></span><strong>${escapeHtml(value)}</strong>
+        <span>${escapeHtml(row.label)}</span><strong>${escapeHtml(value)}</strong>
       </button>`;
     }
     const raw = tooltipState.draftValue ?? rawValueForField(node, row.field);
@@ -1548,8 +1541,24 @@
       input = `<input data-edit-input type="text" value="${escapeHtml(raw)}" />`;
     }
     return `<div class="${classes.join(" ")}" data-field="${row.field}">
-      <span>${escapeHtml(row.label)} <small>${escapeHtml(typeHint)}</small></span>${input}
+      <span>${escapeHtml(row.label)}</span>${input}
     </div>`;
+  }
+
+  function cancelTooltipHide() {
+    if (!tooltipHideTimer) return;
+    window.clearTimeout(tooltipHideTimer);
+    tooltipHideTimer = null;
+  }
+
+  function scheduleTooltipHide(delay = 120) {
+    cancelTooltipHide();
+    tooltipHideTimer = window.setTimeout(() => {
+      tooltipHideTimer = null;
+      if (tooltipEl?.matches(":hover")) return;
+      if (tooltipState.editingField) return;
+      hideTooltip();
+    }, delay);
   }
 
   function positionTooltip(x, y) {
@@ -1566,6 +1575,7 @@
 
   function showTooltip(x, y, node, start, end) {
     if (!tooltipEl) return;
+    cancelTooltipHide();
     scheduleTooltipMetadataRefresh(node);
     scheduleRefOptionsRefresh(node);
     const sameVisibleNode = tooltipState.nodeId === node.id && tooltipEl.classList.contains("visible");
@@ -1606,6 +1616,7 @@
   }
 
   function hideTooltip() {
+    cancelTooltipHide();
     if (tooltipEl) tooltipEl.classList.remove("visible", "editing");
     tooltipState.nodeId = null;
     tooltipState.editingField = null;
@@ -1681,6 +1692,7 @@
         m.dataset.nodeId = node.id;
         m.addEventListener("mousemove", (ev) => showTooltip(ev.clientX, ev.clientY, node, node.milestoneDate, node.milestoneDate));
         m.addEventListener("mouseenter", (ev) => showTooltip(ev.clientX, ev.clientY, node, node.milestoneDate, node.milestoneDate));
+        m.addEventListener("mouseleave", () => scheduleTooltipHide());
         attachMilestoneDrag(m);
         timelineGridEl.appendChild(m);
         if (labelsVisible && !hideLabel) {
@@ -1696,31 +1708,6 @@
 
       const s = normalizeDate(start);
       const e = normalizeDate(end);
-      if (diffInDays(s, e) === 0) {
-        const frac = dateToCenterFrac(s);
-        if (frac == null) return;
-        const x = frac * containerWidth;
-        const centerY = trackIndex * rowHeight + rowHeight / 2;
-        const circle = document.createElement("div");
-        circle.className = `gantt-zero-duration level-${node.level}` + (node.children.length ? " parent" : "");
-        circle.style.left = x.toFixed(1) + "px";
-        circle.style.top = centerY.toFixed(1) + "px";
-        circle.style.background = getColorForNode(node);
-        circle.dataset.nodeId = node.id;
-        circle.addEventListener("mousemove", (ev) => showTooltip(ev.clientX, ev.clientY, node, s, e));
-        circle.addEventListener("mouseenter", (ev) => showTooltip(ev.clientX, ev.clientY, node, s, e));
-        timelineGridEl.appendChild(circle);
-        if (labelsVisible && !hideLabel) {
-          const label = document.createElement("span");
-          label.className = "milestone-label";
-          label.textContent = node.label;
-          label.style.left = (x + 18) + "px";
-          label.style.top = centerY + "px";
-          timelineGridEl.appendChild(label);
-        }
-        return;
-      }
-
       const leftFrac = dateToFrac(s);
       const rightFrac = dateToFrac(e);
       if (leftFrac == null || rightFrac == null) return;
@@ -1754,7 +1741,10 @@
         showTooltip(ev.clientX, ev.clientY, node, s, e);
       });
       bar.addEventListener("mouseenter", (ev) => showTooltip(ev.clientX, ev.clientY, node, s, e));
-      bar.addEventListener("mouseleave", () => { bar.style.cursor = "default"; });
+      bar.addEventListener("mouseleave", () => {
+        bar.style.cursor = "default";
+        scheduleTooltipHide();
+      });
       attachBarDrag(bar);
       timelineGridEl.appendChild(bar);
     }
@@ -2121,6 +2111,9 @@
   }
 
   if (tooltipEl) {
+    tooltipEl.addEventListener("mouseenter", () => cancelTooltipHide());
+    tooltipEl.addEventListener("mouseleave", () => scheduleTooltipHide(80));
+
     tooltipEl.addEventListener("click", async (e) => {
       e.stopPropagation();
       const node = tooltipState.nodeId ? nodeById.get(tooltipState.nodeId) : null;
