@@ -7,6 +7,7 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 ## Fonctionnalités principales
 
 - Affichage Gantt hiérarchique `Niveau 1 → Niveau 2 → Niveau 3`.
+- Vue table hiérarchique alternative, visuellement cohérente avec la timeline, avec champs en colonnes et édition directe des cellules sans infobulle.
 - Avec une vue liée Grist, le widget conserve le contexte hiérarchique : élément sélectionné, parent associé le cas échéant, et tous les enfants visibles dans le mapping.
 - Mapping interne multitable intégré au widget : sélection d’une table source par niveau et mise à jour automatique des listes de champs disponibles.
 - Champs essentiels par niveau : nom, date de début, date de fin, statut, responsable, avancement.
@@ -15,7 +16,8 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 - Navigation temporelle : précédent / suivant / aujourd’hui, avec aujourd’hui placé par défaut dans le deuxième tiers de la timeline et un pas de déplacement très réduit.
 - Repli / dépli global et par nœud hiérarchique.
 - Coloration configurable par niveau, nom, statut, responsable, avancement, table source ou dates.
-- Infobulles compactes au survol : champs essentiels sans détail de type de colonne ni liste de choix.
+- Infobulles compactes au survol dans la timeline : champs essentiels sans détail de type de colonne ni liste de choix.
+- Ajout depuis la vue table : bouton global pour créer un niveau 1, boutons `+` sur les lignes de niveau 1 pour créer un niveau 2 rattaché, et boutons `+` sur les lignes de niveau 2 pour créer un niveau 3 rattaché.
 - Bouton global `Édition bloquée/autorisée` : quand il est activé, l’édition des dates par glisser-déposer et l’édition depuis l’infobulle sont autorisées ; quand il est désactivé, aucune édition n’est possible.
 - Routage d’écriture vers les tables sources via `grist.docApi.applyUserActions`.
 - Persistance locale de l’état UI via `localStorage`.
@@ -54,7 +56,8 @@ Quand un champ devient éditable dans l’infobulle, le widget lit les métadonn
 3. Renseigner l’URL de `index.html`.
 4. Ouvrir le panneau `Mapping` du widget et sélectionner les tables/colonnes sources.
 5. Activer l’édition avec le bouton `Édition bloquée/autorisée`.
-6. Modifier un champ depuis l’infobulle ou déplacer/redimensionner une barre explicitement datée.
+6. Modifier un champ depuis l’infobulle, déplacer/redimensionner une barre explicitement datée ou basculer en vue `Table` pour modifier directement les cellules.
+7. En vue `Table`, utiliser `+ Ajouter un niveau 1` ou les boutons `+ Niveau 2` / `+ Niveau 3` des lignes parentes pour créer des éléments rattachés dans les tables sources.
 
 ## Détails techniques
 
