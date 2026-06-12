@@ -18,7 +18,6 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 - Coloration configurable par niveau, nom, statut, responsable, avancement, table source ou dates.
 - Infobulles compactes au survol dans la timeline : champs essentiels sans détail de type de colonne ni liste de choix.
 - Ajout depuis la vue table : bouton global pour créer un niveau 1, boutons `+` sur les lignes de niveau 1 pour créer un niveau 2 rattaché, et boutons `+` sur les lignes de niveau 2 pour créer un niveau 3 rattaché.
-- Vue table triable et filtrable depuis chaque en-tête : les colonnes de date proposent un tri par dates de niveau N1, N2 ou N3 dans les deux sens, tandis que les autres colonnes affichent les valeurs disponibles sous forme de cases à cocher multisélection.
 - Bouton global `Édition bloquée/autorisée` : quand il est activé, l’édition des dates par glisser-déposer et l’édition depuis l’infobulle sont autorisées ; quand il est désactivé, aucune édition n’est possible.
 - Routage d’écriture vers les tables sources via `grist.docApi.applyUserActions`.
 - Persistance de la vue active `Timeline` ou `Table` dans les options Grist propres à chaque widget inséré, avec repli `localStorage` pour les autres préférences UI locales.
@@ -61,8 +60,7 @@ Quand un champ devient éditable dans l’infobulle, le widget lit les métadonn
 5. Activer l’édition avec le bouton `Édition bloquée/autorisée`.
 6. Modifier un champ depuis l’infobulle, déplacer/redimensionner une barre explicitement datée ou basculer en vue `Table` pour modifier directement les cellules.
 7. En vue `Table`, utiliser `+ Ajouter un niveau 1` ou les boutons `+ Niveau 2` / `+ Niveau 3` des lignes parentes pour créer des éléments rattachés dans les tables sources.
-8. Utiliser le sélecteur `Sélecteur champs` de la vue `Table` pour choisir les colonnes affichées avec des cases à cocher, y compris les champs libres ajoutés dans le mapping.
-9. Dans la vue `Table`, utiliser les contrôles des en-têtes pour trier une colonne, trier les dates par niveau N1/N2/N3 ou filtrer les autres champs en cochant une ou plusieurs valeurs.
+8. Utiliser le sélecteur `Champs table` de la vue `Table` pour choisir les colonnes affichées, y compris les champs libres ajoutés dans le mapping.
 
 ## Détails techniques
 
