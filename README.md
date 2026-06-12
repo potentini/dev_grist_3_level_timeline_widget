@@ -7,7 +7,7 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 ## Fonctionnalités principales
 
 - Affichage Gantt hiérarchique `Niveau 1 → Niveau 2 → Niveau 3`.
-- Vue table hiérarchique alternative, visuellement cohérente avec la timeline, avec champs en colonnes et édition directe des cellules sans infobulle, y compris pour les éléments issus d’une vue liée quand l’arbre est replié.
+- Vue table hiérarchique alternative, visuellement cohérente avec la timeline, avec champs en colonnes, édition directe des cellules sans infobulle, et sélecteur `Trier par` pour ordonner la hiérarchie selon `DateDebut1`, `DateFin1`, `DateDebut2`, `DateFin2`, `DateDebut3` ou `DateFin3`.
 - Avec une vue liée Grist, le widget conserve le contexte hiérarchique : élément sélectionné, parent associé le cas échéant, tous les enfants visibles dans le mapping, et sélectionne le plus haut nœud pertinent pour alimenter les filtres des vues liées.
 - Mapping interne multitable intégré au widget : sélection d’une table source par niveau et mise à jour automatique des listes de champs disponibles.
 - Champs essentiels par niveau : nom, date de début, date de fin, statut, responsable, avancement.
