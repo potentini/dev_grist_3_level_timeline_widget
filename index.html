@@ -26,6 +26,8 @@
 
       * { box-sizing: border-box; }
 
+      [hidden] { display: none !important; }
+
       html, body {
         margin: 0;
         padding: 0;
@@ -551,6 +553,11 @@
         box-shadow: var(--shadow);
       }
 
+      .gantt-container[hidden],
+      .table-view[hidden] {
+        display: none !important;
+      }
+
       .table-view {
         display: flex;
         flex-direction: column;
@@ -564,10 +571,17 @@
         justify-content: space-between;
         align-items: center;
         gap: 10px;
-        padding: 10px 14px;
+        padding: 8px 14px;
         background: var(--card-bg);
         border-bottom: 1px solid var(--border);
         box-shadow: var(--shadow);
+      }
+
+      .table-toolbar-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
       }
 
       .table-toolbar-title {
@@ -586,10 +600,10 @@
 
       .table-wrap {
         overflow: auto;
-        margin: 12px;
+        margin: 8px 10px;
         background: var(--card-bg);
         border: 1px solid var(--border);
-        border-radius: 14px;
+        border-radius: 12px;
         box-shadow: var(--shadow);
       }
 
@@ -606,7 +620,7 @@
         border-bottom: 1px solid var(--border);
         border-right: 1px solid #f1f5f9;
         padding: 0;
-        height: 42px;
+        height: 32px;
         vertical-align: middle;
         background: #fff;
       }
@@ -615,7 +629,7 @@
         position: sticky;
         top: 0;
         z-index: 4;
-        padding: 9px 10px;
+        padding: 6px 8px;
         background: #f8fafc;
         color: #475569;
         text-align: left;
@@ -631,14 +645,30 @@
       .table-name-cell {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 7px 10px;
+        gap: 6px;
+        padding: 3px 8px;
         min-width: 260px;
       }
 
+      .task-row.level-1 .task-name,
+      .hierarchy-table tr.level-1 .table-name-cell .table-cell-editor,
+      .hierarchy-table tr.level-1 .table-name-cell .table-cell-readonly,
+      .gantt-bar.level-1 .bar-label,
+      .milestone-label.level-1 {
+        font-weight: 700;
+      }
+
+      .task-row.level-2 .task-name,
+      .hierarchy-table tr.level-2 .table-name-cell .table-cell-editor,
+      .hierarchy-table tr.level-2 .table-name-cell .table-cell-readonly,
+      .gantt-bar.level-2 .bar-label,
+      .milestone-label.level-2 {
+        font-style: italic;
+      }
+
       .level-pill {
-        width: 8px;
-        height: 28px;
+        width: 7px;
+        height: 22px;
         border-radius: 999px;
         flex: 0 0 auto;
       }
@@ -646,11 +676,12 @@
       .table-expander {
         border: none;
         background: transparent;
-        width: 20px;
-        height: 24px;
+        width: 18px;
+        height: 22px;
         cursor: pointer;
         color: var(--text-muted);
         font-weight: 800;
+        padding: 0;
       }
 
       .table-expander:disabled {
@@ -668,10 +699,10 @@
       .table-cell-editor {
         width: 100%;
         min-width: 0;
-        height: 40px;
+        height: 31px;
         border: 0;
         outline: none;
-        padding: 7px 10px;
+        padding: 4px 8px;
         background: transparent;
         color: var(--text);
         font: inherit;
@@ -690,12 +721,12 @@
 
       .table-cell-readonly {
         display: block;
-        padding: 10px;
-        min-height: 40px;
+        padding: 6px 8px;
+        min-height: 31px;
       }
 
       .table-actions-cell {
-        padding: 7px 10px !important;
+        padding: 3px 8px !important;
         white-space: nowrap;
       }
 
@@ -1002,7 +1033,11 @@
           <strong>Table hiérarchique</strong>
           <span id="tableHint">Modifiez directement les cellules ; les valeurs sont synchronisées dans les tables sources.</span>
         </div>
-        <button class="btn active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
+        <div class="table-toolbar-actions">
+          <button class="btn btn-small active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
+          <button class="btn btn-small" id="tableExpandAllBtn" type="button">Tout déplier</button>
+          <button class="btn btn-small" id="tableToggleEditBtn" type="button">Édition bloquée</button>
+        </div>
       </div>
       <div class="table-wrap" id="hierarchyTableWrap">
         <div class="table-empty">En attente du mapping interne…</div>
