@@ -20,7 +20,7 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 - Ajout depuis la vue table : bouton global pour créer un niveau 1, boutons `+` sur les lignes de niveau 1 pour créer un niveau 2 rattaché, et boutons `+` sur les lignes de niveau 2 pour créer un niveau 3 rattaché.
 - Bouton global `Édition bloquée/autorisée` : quand il est activé, l’édition des dates par glisser-déposer et l’édition depuis l’infobulle sont autorisées ; quand il est désactivé, aucune édition n’est possible.
 - Routage d’écriture vers les tables sources via `grist.docApi.applyUserActions`.
-- Persistance locale de l’état UI via `localStorage`, dont la vue active `Timeline` ou `Table`.
+- Persistance de la vue active `Timeline` ou `Table` dans les options Grist propres à chaque widget inséré, avec repli `localStorage` pour les autres préférences UI locales.
 
 ## Structure du projet
 
@@ -66,7 +66,7 @@ Quand un champ devient éditable dans l’infobulle, le widget lit les métadonn
 - Les modes de zoom sont définis dans `ZOOMS`.
 - Les niveaux sont définis dans `LEVELS`.
 - Le mapping interne multitable est stocké sous la clé `grist_gantt_direct_multitable_mapping_v1`.
-- L’état utilisateur est stocké sous la clé `grist_gantt_multilevel_state_v1`.
+- L’état utilisateur local est stocké sous la clé `grist_gantt_multilevel_state_v1`, tandis que la vue active est aussi stockée dans l’option Grist `uiState` propre à chaque instance du widget.
 
 ## Limites connues
 

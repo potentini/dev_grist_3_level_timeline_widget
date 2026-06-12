@@ -35,6 +35,7 @@
   const DAY_VIEW_CELL_WIDTH = 32;
 
   const STORAGE_KEY = "grist_gantt_multilevel_state_v1";
+  const WIDGET_STATE_OPTION_KEY = "uiState";
   const DIRECT_MAPPING_STORAGE_KEY = "grist_gantt_direct_multitable_mapping_v1";
   const DIRECT_FIELDS = ["name", "start", "end", "status", "responsible", "progress"];
 
@@ -138,23 +139,51 @@
     if (debugSyncModeEl) debugSyncModeEl.textContent = message;
   }
 
+  function serializedState() {
+    return {
+      zoomMode,
+      colorField,
+      labelsVisible,
+      compactChildren,
+      allowEditing,
+      viewMode,
+      selectedViewMode: viewMode,
+      tableSortField,
+      expandedNodes,
+      visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
+      visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
+    };
+  }
+
+  function applyState(s, options = {}) {
+    if (!s || typeof s !== "object") return;
+    const { includeViewMode = true } = options;
+    if (s.zoomMode) zoomMode = s.zoomMode;
+    if (s.colorField) colorField = s.colorField;
+    if (typeof s.labelsVisible === "boolean") labelsVisible = s.labelsVisible;
+    if (typeof s.compactChildren === "boolean") compactChildren = s.compactChildren;
+    if (typeof s.allowEditing === "boolean") allowEditing = s.allowEditing;
+    else if (typeof s.allowTimelineDateEdit === "boolean") allowEditing = s.allowTimelineDateEdit;
+    const savedViewMode = s.selectedViewMode || s.viewMode;
+    if (includeViewMode && (savedViewMode === "table" || savedViewMode === "timeline")) viewMode = savedViewMode;
+    if (isValidTableSortField(s.tableSortField)) tableSortField = s.tableSortField;
+    if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
+    if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
+    if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
+  }
+
+  function saveStateToLocalStorage(state) {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
   function loadState() {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const s = JSON.parse(raw);
-      if (s.zoomMode) zoomMode = s.zoomMode;
-      if (s.colorField) colorField = s.colorField;
-      if (typeof s.labelsVisible === "boolean") labelsVisible = s.labelsVisible;
-      if (typeof s.compactChildren === "boolean") compactChildren = s.compactChildren;
-      if (typeof s.allowEditing === "boolean") allowEditing = s.allowEditing;
-      else if (typeof s.allowTimelineDateEdit === "boolean") allowEditing = s.allowTimelineDateEdit;
-      const savedViewMode = s.selectedViewMode || s.viewMode;
-      if (savedViewMode === "table" || savedViewMode === "timeline") viewMode = savedViewMode;
-      if (isValidTableSortField(s.tableSortField)) tableSortField = s.tableSortField;
-      if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
-      if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
-      if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
+      // La vue active est volontairement exclue du repli localStorage : cette clé est
+      // commune à toutes les instances qui utilisent la même URL. La vue est restaurée
+      // via les options Grist propres à chaque widget inséré.
+      applyState(JSON.parse(raw), { includeViewMode: false });
     } catch (e) {
       console.warn("Impossible de charger l’état persistant :", e);
     }
@@ -194,24 +223,20 @@
     return LEVELS.some((levelInfo) => !!config?.levels?.[levelInfo.level]?.tableId);
   }
 
+  function saveWidgetStateOption(state) {
+    if (!window.grist || typeof grist.setOption !== "function") return;
+    grist.setOption(WIDGET_STATE_OPTION_KEY, state)
+      .catch((e) => console.warn("Impossible de sauvegarder l’état propre au widget Grist :", e));
+  }
+
   function saveState() {
+    const state = serializedState();
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        zoomMode,
-        colorField,
-        labelsVisible,
-        compactChildren,
-        allowEditing,
-        viewMode,
-        selectedViewMode: viewMode,
-        tableSortField,
-        expandedNodes,
-        visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
-        visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
-      }));
+      saveStateToLocalStorage(state);
     } catch (e) {
       console.warn("Impossible de sauvegarder l’état persistant :", e);
     }
+    saveWidgetStateOption(state);
   }
 
   loadState();
@@ -2685,6 +2710,18 @@
   updateZoomButtons();
 
   grist.ready({ requiredAccess: "full", allowSelectBy: true });
+
+  grist.onOptions(function (options) {
+    const widgetState = options?.[WIDGET_STATE_OPTION_KEY];
+    if (!widgetState) return;
+    applyState(widgetState, { includeViewMode: true });
+    try {
+      saveStateToLocalStorage(serializedState());
+    } catch (e) {
+      console.warn("Impossible de synchroniser l’état local depuis les options Grist :", e);
+    }
+    render();
+  });
 
   grist.onRecords(async function (records) {
     setDebugStatus(`onRecords reçu: ${records ? records.length : 0} ligne(s)`);
