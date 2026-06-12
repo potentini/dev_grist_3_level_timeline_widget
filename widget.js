@@ -1680,7 +1680,7 @@
         m.style.top = centerY.toFixed(1) + "px";
         m.style.background = getColorForNode(node);
         m.dataset.nodeId = node.id;
-        m.addEventListener("click", () => selectNodeForLinkedViews(node));
+        m.addEventListener("click", () => selectNodeLocally(node));
         m.addEventListener("mousemove", (ev) => showTooltip(ev.clientX, ev.clientY, node, node.milestoneDate, node.milestoneDate));
         m.addEventListener("mouseenter", (ev) => showTooltip(ev.clientX, ev.clientY, node, node.milestoneDate, node.milestoneDate));
         m.addEventListener("mouseleave", () => scheduleTooltipHide());
@@ -1727,7 +1727,7 @@
         label.textContent = node.label;
         bar.appendChild(label);
       }
-      bar.addEventListener("click", () => selectNodeForLinkedViews(node));
+      bar.addEventListener("click", () => selectNodeLocally(node));
       bar.addEventListener("mousemove", (ev) => {
         setBarCursor(bar, ev);
         showTooltip(ev.clientX, ev.clientY, node, s, e);
@@ -2098,6 +2098,13 @@
     return chain[0];
   }
 
+  function selectNodeLocally(node) {
+    if (!node) return;
+    selectedNodeId = node.id;
+    applyNodeSelectionClasses();
+    setDebugAction(`Sélection locale ${node.source.tableId || "source"}#${node.source.rowId ?? "?"}`);
+  }
+
   async function selectNodeForLinkedViews(node) {
     if (!node) return;
     selectedNodeId = node.id;
@@ -2163,6 +2170,7 @@
     if (zoomControlsEl) zoomControlsEl.hidden = viewMode !== "timeline";
     if (currentPeriodEl) currentPeriodEl.hidden = viewMode !== "timeline";
     if (tableToolbarActionsEl) tableToolbarActionsEl.hidden = viewMode !== "table";
+    if (tableSortSelect?.parentElement) tableSortSelect.parentElement.hidden = viewMode !== "table";
     updateTableSortSelect();
   }
 
@@ -2317,10 +2325,11 @@
       const cells = [`<td>${nameCell}</td>`]
         .concat(TABLE_FIELDS.slice(1).map((col) => `<td>${buildTableInput(node, col.field)}</td>`));
       const canAddChild = node.level < 3 && canAddLevel(node.level + 1);
-      const action = node.level < 3
+      const addAction = node.level < 3
         ? `<button type="button" class="btn btn-small row-add-btn" data-add-child="${escapeHtml(node.id)}" ${canAddChild ? "" : "disabled"}>+ Niveau ${node.level + 1}</button>`
-        : '<span class="table-cell-readonly">—</span>';
-      return `<tr class="level-${node.level}${selectedNodeId === node.id ? " selected" : ""}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${action}</td></tr>`;
+        : "";
+      const deleteAction = `<button type="button" class="btn btn-small row-delete-btn" data-delete-node="${escapeHtml(node.id)}" ${canDeleteNode(node) ? "" : "disabled"}>Supprimer</button>`;
+      return `<tr class="level-${node.level}${selectedNodeId === node.id ? " selected" : ""}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${addAction}${deleteAction}</td></tr>`;
     }).join("");
     hierarchyTableWrapEl.innerHTML = `<table class="hierarchy-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
   }
@@ -2350,6 +2359,10 @@
     return true;
   }
 
+  function canDeleteNode(node) {
+    return !!(allowEditing && node?.source?.tableId && node.source.rowId != null);
+  }
+
   function parentValueForAdd(level, parentNode) {
     if (level <= 1) return null;
     const cfg = directMappingConfig.levels[level];
@@ -2357,6 +2370,22 @@
     const parentId = parentNode?.source?.rowId;
     if (parentId == null) throw new Error("Le parent n’a pas de ligne source identifiable.");
     return baseGristType(meta?.type) === "RefList" ? ["L", parentId] : parentId;
+  }
+
+  async function deleteDirectItem(node) {
+    if (!canDeleteNode(node)) throw new Error("Autorisez l’édition et vérifiez que la ligne source est identifiable avant de supprimer.");
+    const hasChildren = !!node.children?.length;
+    const childWarning = hasChildren ? "\n\nAttention : cet élément contient des sous-éléments. Seule cette ligne sera supprimée ; vérifiez les lignes enfants après suppression." : "";
+    const confirmed = window.confirm(`Supprimer définitivement « ${node.label || "cet élément"} » ?${childWarning}`);
+    if (!confirmed) return false;
+    await grist.docApi.applyUserActions([["RemoveRecord", node.source.tableId, node.source.rowId]]);
+    setDebugSyncMode("docApi.applyUserActions (suppression table source)");
+    setDebugAction(`Remove ${node.source.tableId}#${node.source.rowId}`);
+    if (selectedNodeId === node.id) selectedNodeId = null;
+    hideTooltip();
+    await loadAndRenderDirectMapping();
+    showToast("Élément supprimé définitivement", "success");
+    return true;
   }
 
   async function addDirectItem(level, parentNode = null) {
@@ -2440,9 +2469,6 @@
   tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
 
   hierarchyTableWrapEl?.addEventListener("click", async (e) => {
-    const row = e.target.closest("tr[data-node-id]");
-    if (row) selectNodeByIdForLinkedViews(row.dataset.nodeId);
-
     const toggle = e.target.closest("[data-table-toggle]");
     if (toggle) {
       const node = nodeById.get(toggle.dataset.tableToggle);
@@ -2453,16 +2479,34 @@
       return;
     }
 
-    const addBtn = e.target.closest("[data-add-child]");
-    if (!addBtn) return;
-    const parent = nodeById.get(addBtn.dataset.addChild);
-    if (!parent) return;
-    try {
-      await addDirectItem(parent.level + 1, parent);
-    } catch (err) {
-      console.error(err);
-      showToast(err.message || "Erreur lors de l’ajout", "error");
+    const deleteBtn = e.target.closest("[data-delete-node]");
+    if (deleteBtn) {
+      const node = nodeById.get(deleteBtn.dataset.deleteNode);
+      if (!node) return;
+      try {
+        await deleteDirectItem(node);
+      } catch (err) {
+        console.error(err);
+        showToast(err.message || "Erreur lors de la suppression", "error");
+      }
+      return;
     }
+
+    const addBtn = e.target.closest("[data-add-child]");
+    if (addBtn) {
+      const parent = nodeById.get(addBtn.dataset.addChild);
+      if (!parent) return;
+      try {
+        await addDirectItem(parent.level + 1, parent);
+      } catch (err) {
+        console.error(err);
+        showToast(err.message || "Erreur lors de l’ajout", "error");
+      }
+      return;
+    }
+
+    const row = e.target.closest("tr[data-node-id]");
+    if (row && !e.target.closest(".table-cell-editor")) selectNodeByIdForLinkedViews(row.dataset.nodeId);
   });
 
   hierarchyTableWrapEl?.addEventListener("change", async (e) => {
