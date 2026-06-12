@@ -583,6 +583,27 @@
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
+        align-items: center;
+      }
+
+      .table-sort-control {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 0 4px;
+        color: var(--text-muted);
+        font-size: 0.72rem;
+        font-weight: 700;
+      }
+
+      .table-sort-control select {
+        height: 26px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: #fff;
+        color: var(--text-main);
+        font-size: 0.76rem;
+        font-weight: 700;
       }
 
       .table-wrap {
@@ -962,6 +983,10 @@
           <button class="btn btn-small active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
           <button class="btn btn-small" id="tableExpandAllBtn" type="button">Tout déplier</button>
           <button class="btn btn-small" id="tableToggleEditBtn" type="button">Édition bloquée</button>
+          <div class="table-sort-control">
+            <label for="tableSortSelect">Trier par</label>
+            <select id="tableSortSelect"></select>
+          </div>
         </div>
 
         <div class="control">

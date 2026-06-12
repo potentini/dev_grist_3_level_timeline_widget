@@ -53,6 +53,7 @@
   let compactChildren = false;
   let allowEditing = false;
   let viewMode = "timeline";
+  let tableSortField = "default";
   let currentTableId = null;
   let currentViewRecords = null;
   let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
@@ -107,6 +108,7 @@
   const tableAddLevel1Btn = document.getElementById("tableAddLevel1Btn");
   const tableExpandAllBtn = document.getElementById("tableExpandAllBtn");
   const tableToggleEditBtn = document.getElementById("tableToggleEditBtn");
+  const tableSortSelect = document.getElementById("tableSortSelect");
   const tableToolbarActionsEl = document.getElementById("tableToolbarActions");
   const zoomControlsEl = document.querySelector(".zoom-controls");
 
@@ -149,6 +151,7 @@
       else if (typeof s.allowTimelineDateEdit === "boolean") allowEditing = s.allowTimelineDateEdit;
       const savedViewMode = s.selectedViewMode || s.viewMode;
       if (savedViewMode === "table" || savedViewMode === "timeline") viewMode = savedViewMode;
+      if (isValidTableSortField(s.tableSortField)) tableSortField = s.tableSortField;
       if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
       if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
       if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
@@ -201,6 +204,7 @@
         allowEditing,
         viewMode,
         selectedViewMode: viewMode,
+        tableSortField,
         expandedNodes,
         visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
         visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
@@ -565,7 +569,15 @@
     const ao = a.order != null ? a.order : Infinity;
     const bo = b.order != null ? b.order : Infinity;
     if (ao !== bo) return ao - bo;
+    return sourceOrderComparison(a, b);
+  }
+
+  function sourceOrderComparison(a, b) {
     return (a.sourceIndex ?? Infinity) - (b.sourceIndex ?? Infinity) || a.label.localeCompare(b.label, "fr");
+  }
+
+  function isValidTableSortField(value) {
+    return value === "default" || /^date(?:Start|End)[1-3]$/.test(value || "");
   }
 
   function computeGlobalRange(nodes) {
@@ -2095,6 +2107,20 @@
     { field: "progress", label: "Avancement", width: "120px" }
   ];
 
+  function updateTableSortSelect() {
+    if (!tableSortSelect) return;
+    const dateOptions = LEVELS.flatMap((levelInfo) => [
+      { value: `dateStart${levelInfo.level}`, label: `DateDebut${levelInfo.level}` },
+      { value: `dateEnd${levelInfo.level}`, label: `DateFin${levelInfo.level}` }
+    ]);
+    const options = [{ value: "default", label: "Ordre par défaut" }, ...dateOptions];
+    const html = options.map((option) =>
+      `<option value="${escapeHtml(option.value)}" ${option.value === tableSortField ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+    ).join("");
+    if (tableSortSelect.innerHTML !== html) tableSortSelect.innerHTML = html;
+    tableSortSelect.value = tableSortField;
+  }
+
   function updateViewModeButtons() {
     timelineViewBtn?.classList.toggle("active", viewMode === "timeline");
     tableViewBtn?.classList.toggle("active", viewMode === "table");
@@ -2112,6 +2138,7 @@
     if (zoomControlsEl) zoomControlsEl.hidden = viewMode !== "timeline";
     if (currentPeriodEl) currentPeriodEl.hidden = viewMode !== "timeline";
     if (tableToolbarActionsEl) tableToolbarActionsEl.hidden = viewMode !== "table";
+    updateTableSortSelect();
   }
 
   function hasLinkedSelectionInSubtree(node) {
@@ -2119,16 +2146,63 @@
     return node.children.some(hasLinkedSelectionInSubtree);
   }
 
+  function tableSortConfig() {
+    const match = /^date(Start|End)([1-3])$/.exec(tableSortField || "");
+    if (!match) return null;
+    return { kind: match[1] === "Start" ? "start" : "end", level: Number(match[2]) };
+  }
+
+  function dateValueForTableSort(node, config) {
+    if (!node || !config) return null;
+    if (node.level === config.level) {
+      if (config.kind === "start") return node.startDate || node.milestoneDate || node.aggStart || null;
+      return node.endDate || node.aggEnd || node.milestoneDate || node.startDate || null;
+    }
+
+    let selected = null;
+    function visit(candidate) {
+      if (!candidate || candidate.level > config.level) return;
+      if (candidate.level === config.level) {
+        const value = config.kind === "start"
+          ? candidate.startDate || candidate.milestoneDate || candidate.aggStart || null
+          : candidate.endDate || candidate.aggEnd || candidate.milestoneDate || candidate.startDate || null;
+        if (value && (!selected || value < selected)) selected = value;
+        return;
+      }
+      candidate.children.forEach(visit);
+    }
+    node.children.forEach(visit);
+    return selected;
+  }
+
+  function compareNodesForTable(a, b) {
+    const config = tableSortConfig();
+    if (!config) return sortNodes(a, b);
+    const ad = dateValueForTableSort(a, config);
+    const bd = dateValueForTableSort(b, config);
+    if (ad && bd) {
+      const diff = ad.getTime() - bd.getTime();
+      if (diff) return diff;
+    } else if (ad || bd) {
+      return ad ? -1 : 1;
+    }
+    return sortNodes(a, b);
+  }
+
+  function sortedTableChildren(node) {
+    return [...(node.children || [])].sort(compareNodesForTable);
+  }
+
   function visibleTableRows() {
     const rows = [];
     function walk(node) {
       rows.push(node);
       const expanded = isNodeExpanded(node);
-      for (const child of node.children) {
+      for (const child of sortedTableChildren(node)) {
         if (expanded || hasLinkedSelectionInSubtree(child)) walk(child);
       }
     }
-    treeRoots.forEach((root) => walk(root));
+    [...treeRoots].sort(compareNodesForTable).forEach((root) => walk(root));
     return rows;
   }
 
@@ -2503,6 +2577,12 @@
   });
   toggleDateEditBtn.addEventListener("click", toggleEditing);
   tableToggleEditBtn?.addEventListener("click", toggleEditing);
+  tableSortSelect?.addEventListener("change", (e) => {
+    const nextSort = isValidTableSortField(e.target.value) ? e.target.value : "default";
+    tableSortField = nextSort;
+    saveState();
+    renderTableView();
+  });
   expandAllBtn.addEventListener("click", toggleAllNodes);
   tableExpandAllBtn?.addEventListener("click", toggleAllNodes);
   colorFieldSelect.addEventListener("change", (e) => { colorField = e.target.value; saveState(); render(); });
