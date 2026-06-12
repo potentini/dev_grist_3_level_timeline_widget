@@ -54,7 +54,7 @@
   let compactChildren = false;
   let allowEditing = false;
   let viewMode = "timeline";
-  let tableSortField = "default";
+  let timelineSortField = "default";
   let currentTableId = null;
   let currentViewRecords = null;
   let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
@@ -109,7 +109,7 @@
   const tableAddLevel1Btn = document.getElementById("tableAddLevel1Btn");
   const tableExpandAllBtn = document.getElementById("tableExpandAllBtn");
   const tableToggleEditBtn = document.getElementById("tableToggleEditBtn");
-  const tableSortSelect = document.getElementById("tableSortSelect");
+  const timelineDateSortSelect = document.getElementById("timelineDateSortSelect");
   const tableToolbarActionsEl = document.getElementById("tableToolbarActions");
   const zoomControlsEl = document.querySelector(".zoom-controls");
 
@@ -148,7 +148,7 @@
       allowEditing,
       viewMode,
       selectedViewMode: viewMode,
-      tableSortField,
+      timelineSortField,
       expandedNodes,
       visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
       visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
@@ -166,7 +166,8 @@
     else if (typeof s.allowTimelineDateEdit === "boolean") allowEditing = s.allowTimelineDateEdit;
     const savedViewMode = s.selectedViewMode || s.viewMode;
     if (includeViewMode && (savedViewMode === "table" || savedViewMode === "timeline")) viewMode = savedViewMode;
-    if (isValidTableSortField(s.tableSortField)) tableSortField = s.tableSortField;
+    const savedTimelineSortField = s.timelineSortField || s.tableSortField;
+    if (isValidDateSortField(savedTimelineSortField)) timelineSortField = savedTimelineSortField;
     if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
     if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
     if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
@@ -601,7 +602,7 @@
     return (a.sourceIndex ?? Infinity) - (b.sourceIndex ?? Infinity) || a.label.localeCompare(b.label, "fr");
   }
 
-  function isValidTableSortField(value) {
+  function isValidDateSortField(value) {
     return value === "default" || /^date(?:Start|End)[1-3]$/.test(value || "");
   }
 
@@ -626,15 +627,16 @@
   function buildTracks() {
     const tracks = [];
     function walk(node) {
+      const children = sortedTimelineChildren(node);
       tracks.push({ kind: "node", node });
       if (!isNodeExpanded(node)) return;
-      if (compactChildren && node.children.length && node.children.every((c) => !c.children.length)) {
-        tracks.push({ kind: "compact", parent: node, nodes: node.children });
+      if (compactChildren && children.length && children.every((c) => !c.children.length)) {
+        tracks.push({ kind: "compact", parent: node, nodes: children });
       } else {
-        node.children.forEach(walk);
+        children.forEach(walk);
       }
     }
-    treeRoots.forEach(walk);
+    [...treeRoots].sort(compareNodesForTimeline).forEach(walk);
     flatTracks = tracks;
     return tracks;
   }
@@ -2139,18 +2141,18 @@
     { field: "progress", label: "Avancement", width: "120px" }
   ];
 
-  function updateTableSortSelect() {
-    if (!tableSortSelect) return;
+  function updateTimelineDateSortSelect() {
+    if (!timelineDateSortSelect) return;
     const dateOptions = LEVELS.flatMap((levelInfo) => [
       { value: `dateStart${levelInfo.level}`, label: `DateDebut${levelInfo.level}` },
       { value: `dateEnd${levelInfo.level}`, label: `DateFin${levelInfo.level}` }
     ]);
     const options = [{ value: "default", label: "Ordre par défaut" }, ...dateOptions];
     const html = options.map((option) =>
-      `<option value="${escapeHtml(option.value)}" ${option.value === tableSortField ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+      `<option value="${escapeHtml(option.value)}" ${option.value === timelineSortField ? "selected" : ""}>${escapeHtml(option.label)}</option>`
     ).join("");
-    if (tableSortSelect.innerHTML !== html) tableSortSelect.innerHTML = html;
-    tableSortSelect.value = tableSortField;
+    if (timelineDateSortSelect.innerHTML !== html) timelineDateSortSelect.innerHTML = html;
+    timelineDateSortSelect.value = timelineSortField;
   }
 
   function updateViewModeButtons() {
@@ -2170,8 +2172,8 @@
     if (zoomControlsEl) zoomControlsEl.hidden = viewMode !== "timeline";
     if (currentPeriodEl) currentPeriodEl.hidden = viewMode !== "timeline";
     if (tableToolbarActionsEl) tableToolbarActionsEl.hidden = viewMode !== "table";
-    if (tableSortSelect?.parentElement) tableSortSelect.parentElement.hidden = viewMode !== "table";
-    updateTableSortSelect();
+    if (timelineDateSortSelect?.parentElement) timelineDateSortSelect.parentElement.hidden = viewMode !== "timeline";
+    updateTimelineDateSortSelect();
   }
 
   function hasLinkedSelectionInSubtree(node) {
@@ -2179,13 +2181,13 @@
     return node.children.some(hasLinkedSelectionInSubtree);
   }
 
-  function tableSortConfig() {
-    const match = /^date(Start|End)([1-3])$/.exec(tableSortField || "");
+  function timelineSortConfig() {
+    const match = /^date(Start|End)([1-3])$/.exec(timelineSortField || "");
     if (!match) return null;
     return { kind: match[1] === "Start" ? "start" : "end", level: Number(match[2]) };
   }
 
-  function dateValueForTableSort(node, config) {
+  function dateValueForTimelineSort(node, config) {
     if (!node || !config) return null;
     if (node.level === config.level) {
       if (config.kind === "start") return node.startDate || node.milestoneDate || node.aggStart || null;
@@ -2208,11 +2210,11 @@
     return selected;
   }
 
-  function compareNodesForTable(a, b) {
-    const config = tableSortConfig();
+  function compareNodesForTimeline(a, b) {
+    const config = timelineSortConfig();
     if (!config) return sortNodes(a, b);
-    const ad = dateValueForTableSort(a, config);
-    const bd = dateValueForTableSort(b, config);
+    const ad = dateValueForTimelineSort(a, config);
+    const bd = dateValueForTimelineSort(b, config);
     if (ad && bd) {
       const diff = ad.getTime() - bd.getTime();
       if (diff) return diff;
@@ -2222,8 +2224,12 @@
     return sortNodes(a, b);
   }
 
-  function sortedTableChildren(node) {
-    return [...(node.children || [])].sort(compareNodesForTable);
+  function sortedTimelineChildren(node) {
+    return [...(node.children || [])].sort(compareNodesForTimeline);
+  }
+
+  function sortedDefaultChildren(node) {
+    return [...(node.children || [])].sort(sortNodes);
   }
 
   function visibleTableRows() {
@@ -2231,11 +2237,11 @@
     function walk(node) {
       rows.push(node);
       const expanded = isNodeExpanded(node);
-      for (const child of sortedTableChildren(node)) {
+      for (const child of sortedDefaultChildren(node)) {
         if (expanded || hasLinkedSelectionInSubtree(child)) walk(child);
       }
     }
-    [...treeRoots].sort(compareNodesForTable).forEach((root) => walk(root));
+    [...treeRoots].sort(sortNodes).forEach((root) => walk(root));
     return rows;
   }
 
@@ -2646,11 +2652,12 @@
   });
   toggleDateEditBtn.addEventListener("click", toggleEditing);
   tableToggleEditBtn?.addEventListener("click", toggleEditing);
-  tableSortSelect?.addEventListener("change", (e) => {
-    const nextSort = isValidTableSortField(e.target.value) ? e.target.value : "default";
-    tableSortField = nextSort;
+  timelineDateSortSelect?.addEventListener("change", (e) => {
+    const nextSort = isValidDateSortField(e.target.value) ? e.target.value : "default";
+    timelineSortField = nextSort;
+    flatTracks = [];
     saveState();
-    renderTableView();
+    render();
   });
   expandAllBtn.addEventListener("click", toggleAllNodes);
   tableExpandAllBtn?.addEventListener("click", toggleAllNodes);

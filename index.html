@@ -590,7 +590,7 @@
         display: none !important;
       }
 
-      .table-sort-control {
+      .timeline-sort-control {
         display: flex;
         align-items: center;
         gap: 5px;
@@ -600,7 +600,7 @@
         font-weight: 700;
       }
 
-      .table-sort-control select {
+      .timeline-sort-control select {
         height: 26px;
         border: 1px solid var(--border);
         border-radius: 7px;
@@ -998,10 +998,6 @@
           <button class="btn btn-small active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
           <button class="btn btn-small" id="tableExpandAllBtn" type="button">Tout déplier</button>
           <button class="btn btn-small" id="tableToggleEditBtn" type="button">Édition bloquée</button>
-          <div class="table-sort-control">
-            <label for="tableSortSelect">Trier par</label>
-            <select id="tableSortSelect"></select>
-          </div>
         </div>
 
         <div class="control">
@@ -1015,6 +1011,10 @@
         <button class="btn btn-small" id="toggleLabelsBtn">Masquer labels</button>
         <button class="btn btn-small" id="groupChildrenBtn">Niveaux bas : multi-lignes</button>
         <button class="btn btn-small" id="toggleDateEditBtn">Édition bloquée</button>
+        <div class="timeline-sort-control">
+          <label for="timelineDateSortSelect">Trier par date</label>
+          <select id="timelineDateSortSelect"></select>
+        </div>
         <button class="btn btn-small" id="toggleMappingPanelBtn">Aide mapping</button>
 
         <button class="btn btn-small" id="prevBtn" title="Période précédente">◀</button>
