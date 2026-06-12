@@ -530,6 +530,191 @@
         color: var(--text-muted);
       }
 
+
+      .view-toggle {
+        display: inline-flex;
+        padding: 2px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #eef2ff;
+        gap: 2px;
+      }
+
+      .view-toggle .btn {
+        border: 0;
+        background: transparent;
+      }
+
+      .view-toggle .btn.active {
+        background: var(--card-bg);
+        color: var(--primary);
+        box-shadow: var(--shadow);
+      }
+
+      .table-view {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 60px);
+        overflow: hidden;
+        background: var(--bg);
+      }
+
+      .table-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: var(--card-bg);
+        border-bottom: 1px solid var(--border);
+        box-shadow: var(--shadow);
+      }
+
+      .table-toolbar-title {
+        display: grid;
+        gap: 2px;
+      }
+
+      .table-toolbar-title strong {
+        font-size: 0.95rem;
+      }
+
+      .table-toolbar-title span {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+      }
+
+      .table-wrap {
+        overflow: auto;
+        margin: 12px;
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+      }
+
+      .hierarchy-table {
+        width: 100%;
+        min-width: 980px;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.82rem;
+      }
+
+      .hierarchy-table th,
+      .hierarchy-table td {
+        border-bottom: 1px solid var(--border);
+        border-right: 1px solid #f1f5f9;
+        padding: 0;
+        height: 42px;
+        vertical-align: middle;
+        background: #fff;
+      }
+
+      .hierarchy-table th {
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        padding: 9px 10px;
+        background: #f8fafc;
+        color: #475569;
+        text-align: left;
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .hierarchy-table tr:hover td { background: #fafbff; }
+      .hierarchy-table tr.level-1 td { background: #fbfdff; }
+      .hierarchy-table tr.level-1:hover td { background: #f5f7ff; }
+
+      .table-name-cell {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        min-width: 260px;
+      }
+
+      .level-pill {
+        width: 8px;
+        height: 28px;
+        border-radius: 999px;
+        flex: 0 0 auto;
+      }
+
+      .table-expander {
+        border: none;
+        background: transparent;
+        width: 20px;
+        height: 24px;
+        cursor: pointer;
+        color: var(--text-muted);
+        font-weight: 800;
+      }
+
+      .table-expander:disabled {
+        cursor: default;
+        opacity: 0.25;
+      }
+
+      .table-level-label {
+        color: var(--text-muted);
+        font-weight: 700;
+        font-size: 0.72rem;
+        white-space: nowrap;
+      }
+
+      .table-cell-editor {
+        width: 100%;
+        min-width: 0;
+        height: 40px;
+        border: 0;
+        outline: none;
+        padding: 7px 10px;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+      }
+
+      .table-cell-editor:focus {
+        background: #eef2ff;
+        box-shadow: inset 0 0 0 2px rgba(79, 70, 229, 0.28);
+      }
+
+      .table-cell-editor:disabled,
+      .table-cell-readonly {
+        color: var(--text-muted);
+        background: #f8fafc;
+      }
+
+      .table-cell-readonly {
+        display: block;
+        padding: 10px;
+        min-height: 40px;
+      }
+
+      .table-actions-cell {
+        padding: 7px 10px !important;
+        white-space: nowrap;
+      }
+
+      .row-add-btn {
+        border-color: #c7d2fe;
+        color: var(--primary);
+        background: #eef2ff;
+      }
+
+      .row-add-btn:hover {
+        background: #e0e7ff;
+      }
+
+      .table-empty {
+        padding: 18px;
+        color: var(--text-muted);
+        font-size: 0.86rem;
+      }
+
       .tooltip {
         position: fixed;
         background: #0f172a;
@@ -747,6 +932,12 @@
           <select id="colorFieldSelect"></select>
         </div>
 
+        <div class="view-toggle" aria-label="Choix de vue">
+          <button class="btn btn-small active" id="timelineViewBtn" type="button">Timeline</button>
+          <button class="btn btn-small" id="tableViewBtn" type="button">Table</button>
+        </div>
+
+        <button class="btn btn-small" id="addLevel1Btn" type="button" hidden>+ Niveau 1</button>
         <button class="btn btn-small" id="expandAllBtn">Tout déplier</button>
         <button class="btn btn-small" id="toggleSidebarBtn">Masquer liste</button>
         <button class="btn btn-small" id="toggleLabelsBtn">Masquer labels</button>
@@ -802,6 +993,19 @@
         <div class="legend-item">
           <span class="legend-milestone"></span> Jalon
         </div>
+      </div>
+    </div>
+
+    <div class="table-view" id="tableView" hidden>
+      <div class="table-toolbar">
+        <div class="table-toolbar-title">
+          <strong>Table hiérarchique</strong>
+          <span id="tableHint">Modifiez directement les cellules ; les valeurs sont synchronisées dans les tables sources.</span>
+        </div>
+        <button class="btn active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
+      </div>
+      <div class="table-wrap" id="hierarchyTableWrap">
+        <div class="table-empty">En attente du mapping interne…</div>
       </div>
     </div>
 

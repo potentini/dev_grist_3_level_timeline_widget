@@ -52,6 +52,7 @@
   let labelsVisible = true;
   let compactChildren = false;
   let allowEditing = false;
+  let viewMode = "timeline";
   let currentTableId = null;
   let currentViewRecords = null;
   let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
@@ -97,6 +98,12 @@
   const toggleMappingPanelBtn = document.getElementById("toggleMappingPanelBtn");
   const mappingPanelEl = document.getElementById("mappingPanel");
   const debugPanelEl = document.getElementById("debugPanel");
+  const timelineViewBtn = document.getElementById("timelineViewBtn");
+  const tableViewBtn = document.getElementById("tableViewBtn");
+  const addLevel1Btn = document.getElementById("addLevel1Btn");
+  const tableViewEl = document.getElementById("tableView");
+  const hierarchyTableWrapEl = document.getElementById("hierarchyTableWrap");
+  const tableAddLevel1Btn = document.getElementById("tableAddLevel1Btn");
 
   const dragState = {
     active: false,
@@ -135,6 +142,7 @@
       if (typeof s.compactChildren === "boolean") compactChildren = s.compactChildren;
       if (typeof s.allowEditing === "boolean") allowEditing = s.allowEditing;
       else if (typeof s.allowTimelineDateEdit === "boolean") allowEditing = s.allowTimelineDateEdit;
+      if (s.viewMode === "table" || s.viewMode === "timeline") viewMode = s.viewMode;
       if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
       if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
       if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
@@ -185,6 +193,7 @@
         labelsVisible,
         compactChildren,
         allowEditing,
+        viewMode,
         expandedNodes,
         visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
         visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
@@ -454,7 +463,8 @@
       progressCol: target.source.progressCol || duplicate.source.progressCol || null,
       nameCol: target.source.nameCol || duplicate.source.nameCol || null,
       statusCol: target.source.statusCol || duplicate.source.statusCol || null,
-      responsibleCol: target.source.responsibleCol || duplicate.source.responsibleCol || null
+      responsibleCol: target.source.responsibleCol || duplicate.source.responsibleCol || null,
+      parentCol: target.source.parentCol || duplicate.source.parentCol || null
     };
     target.fallbackAliases = target.fallbackAliases || duplicate.fallbackAliases;
   }
@@ -538,7 +548,8 @@
       progressCol: node.source.progressCol || data.source.progressCol || null,
       nameCol: node.source.nameCol || data.source.nameCol || null,
       statusCol: node.source.statusCol || data.source.statusCol || null,
-      responsibleCol: node.source.responsibleCol || data.source.responsibleCol || null
+      responsibleCol: node.source.responsibleCol || data.source.responsibleCol || null,
+      parentCol: node.source.parentCol || data.source.parentCol || null
     };
     node.fallbackAliases = data.fallbackAliases || node.fallbackAliases;
   }
@@ -1071,7 +1082,8 @@
       progressCol: cfg.progressCol || null,
       nameCol: cfg.nameCol || null,
       statusCol: cfg.statusCol || null,
-      responsibleCol: cfg.responsibleCol || null
+      responsibleCol: cfg.responsibleCol || null,
+      parentCol: cfg.parentCol || null
     };
     const node = createEmptyNode({
       id: `L${level}:src:${cfg.tableId}:${rowId}`,
@@ -1979,23 +1991,277 @@
     expandAllBtn.disabled = !hasCollapsibleNodes();
   }
 
+
+
+  const TABLE_FIELDS = [
+    { field: "name", label: "Élément", width: "30%" },
+    { field: "start", label: "Début", width: "130px" },
+    { field: "end", label: "Fin", width: "130px" },
+    { field: "status", label: "Statut", width: "150px" },
+    { field: "responsible", label: "Responsable", width: "170px" },
+    { field: "progress", label: "Avancement", width: "120px" }
+  ];
+
+  function updateViewModeButtons() {
+    timelineViewBtn?.classList.toggle("active", viewMode === "timeline");
+    tableViewBtn?.classList.toggle("active", viewMode === "table");
+    if (ganttContainer) ganttContainer.hidden = viewMode !== "timeline";
+    if (tableViewEl) tableViewEl.hidden = viewMode !== "table";
+    if (addLevel1Btn) {
+      addLevel1Btn.hidden = viewMode !== "table";
+      addLevel1Btn.disabled = !canAddLevel(1);
+    }
+    if (tableAddLevel1Btn) tableAddLevel1Btn.disabled = !canAddLevel(1);
+    const timelineOnly = [prevBtn, nextBtn, todayBtn, toggleSidebarBtn, toggleLabelsBtn, groupChildrenBtn];
+    timelineOnly.forEach((btn) => { if (btn) btn.hidden = viewMode !== "timeline"; });
+  }
+
+  function visibleTableRows() {
+    const rows = [];
+    function walk(node) {
+      rows.push(node);
+      if (isNodeExpanded(node)) node.children.forEach(walk);
+    }
+    treeRoots.forEach(walk);
+    return rows;
+  }
+
+  function tableFieldValue(node, field) {
+    if (field === "start") return node.startDate || node.milestoneDate || "";
+    if (field === "end") return node.endDate || node.aggEnd || node.milestoneDate || "";
+    if (field === "progress") return node.progress == null ? "" : Math.round(node.progress);
+    return fieldDisplayValue(node, field);
+  }
+
+  function tableFieldEditable(node, field) {
+    if (!allowEditing) return false;
+    if (!fieldSourceColumn(node, field)) return false;
+    if (field === "end" && !node.source.endCol) return false;
+    return true;
+  }
+
+  function scheduleTableReferenceRefresh(nodes) {
+    const metas = [];
+    for (const node of nodes) {
+      for (const field of ["responsible", "status", "name"]) {
+        const meta = sourceColumnMeta(node, field);
+        const baseType = baseGristType(meta?.type);
+        if ((baseType === "Ref" || baseType === "RefList") && meta?.refTableId && !refOptionsCache.has(refOptionsKey(meta))) {
+          metas.push(meta);
+        }
+      }
+    }
+    if (!metas.length) return;
+    Promise.all(metas.map(loadRefOptions))
+      .then(() => { if (viewMode === "table") renderTableView(); })
+      .catch((err) => console.warn("Impossible de charger les options de référence de la table :", err));
+  }
+
+  function buildTableInput(node, field) {
+    const editable = tableFieldEditable(node, field);
+    const raw = rawValueForField(node, field);
+    const value = tableFieldValue(node, field);
+    const baseAttrs = `class="table-cell-editor" data-node-id="${escapeHtml(node.id)}" data-field="${escapeHtml(field)}" ${editable ? "" : "disabled"}`;
+    if (!editable) return `<span class="table-cell-readonly">${escapeHtml(field === "progress" && value !== "" ? `${value}%` : (field === "start" || field === "end" ? formatDate(value) : value || "—"))}</span>`;
+
+    const meta = sourceColumnMeta(node, field);
+    const baseType = baseGristType(meta?.type);
+    if (field === "start" || field === "end") {
+      return `<input ${baseAttrs} type="date" value="${escapeHtml(toGristDateString(value))}" />`;
+    }
+    if ((baseType === "Choice" || baseType === "ChoiceList") && meta?.choices?.length) {
+      const multiple = baseType === "ChoiceList";
+      const selected = selectedChoiceValues(raw, multiple);
+      const options = meta.choices.map((choice) => `<option value="${escapeHtml(choice)}" ${selected.includes(choice) ? "selected" : ""}>${escapeHtml(choice)}</option>`).join("");
+      const empty = multiple ? "" : `<option value="" ${selected.length ? "" : "selected"}>—</option>`;
+      return `<select ${baseAttrs} ${multiple ? "multiple" : ""}>${empty}${options}</select>`;
+    }
+    if ((baseType === "Ref" || baseType === "RefList") && meta?.refTableId && refOptionsCache.has(refOptionsKey(meta))) {
+      const multiple = baseType === "RefList";
+      const selected = selectedRefValues(raw, multiple);
+      const options = (refOptionsCache.get(refOptionsKey(meta)) || []).map((option) => `<option value="${escapeHtml(option.value)}" ${selected.includes(option.value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("");
+      const empty = multiple ? "" : `<option value="" ${selected.length ? "" : "selected"}>—</option>`;
+      return `<select ${baseAttrs} ${multiple ? "multiple" : ""}>${empty}${options}</select>`;
+    }
+    if (field === "progress" || baseType === "Numeric" || baseType === "Int" || baseType === "Ref") {
+      const attrs = field === "progress" ? 'min="0" max="100" step="1"' : 'step="any"';
+      return `<input ${baseAttrs} type="number" ${attrs} value="${escapeHtml(raw ?? value ?? "")}" />`;
+    }
+    if (baseType === "Bool") {
+      const checked = raw === true || String(raw).toLowerCase() === "true" || String(raw).toLowerCase() === "oui" || String(raw) === "1";
+      return `<select ${baseAttrs}><option value="false" ${checked ? "" : "selected"}>Non</option><option value="true" ${checked ? "selected" : ""}>Oui</option></select>`;
+    }
+    return `<input ${baseAttrs} type="text" value="${escapeHtml(raw ?? value ?? "")}" />`;
+  }
+
+  function renderTableView() {
+    if (!hierarchyTableWrapEl) return;
+    const rows = visibleTableRows();
+    if (taskCountEl) taskCountEl.textContent = `${allRecords.length} élément(s)`;
+    if (!rows.length) {
+      hierarchyTableWrapEl.innerHTML = '<div class="table-empty">Aucun élément à afficher.</div>';
+      return;
+    }
+    scheduleTableReferenceRefresh(rows);
+    const header = TABLE_FIELDS.map((col) => `<th style="width:${col.width}">${escapeHtml(col.label)}</th>`).join("") + '<th style="width:180px">Actions</th>';
+    const body = rows.map((node) => {
+      const color = getColorForNode(node);
+      const pad = 10 + (node.level - 1) * 24;
+      const toggle = `<button type="button" class="table-expander" data-table-toggle="${escapeHtml(node.id)}" ${node.children.length ? "" : "disabled"}>${node.children.length ? (isNodeExpanded(node) ? "▾" : "▸") : ""}</button>`;
+      const nameCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, "name")}</div>`;
+      const cells = [`<td>${nameCell}</td>`]
+        .concat(TABLE_FIELDS.slice(1).map((col) => `<td>${buildTableInput(node, col.field)}</td>`));
+      const canAddChild = node.level < 3 && canAddLevel(node.level + 1);
+      const action = node.level < 3
+        ? `<button type="button" class="btn btn-small row-add-btn" data-add-child="${escapeHtml(node.id)}" ${canAddChild ? "" : "disabled"}>+ Niveau ${node.level + 1}</button>`
+        : '<span class="table-cell-readonly">—</span>';
+      return `<tr class="level-${node.level}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${action}</td></tr>`;
+    }).join("");
+    hierarchyTableWrapEl.innerHTML = `<table class="hierarchy-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  function readTableEditValue(input) {
+    if (input.tagName === "SELECT" && input.multiple) return Array.from(input.selectedOptions).map((option) => option.value);
+    return input.value;
+  }
+
+  async function updateTableField(node, field, rawValue) {
+    if (!allowEditing) throw new Error("L’édition est bloquée.");
+    if (field === "start" || field === "end") {
+      const sourceCol = fieldSourceColumn(node, field);
+      if (!sourceCol) throw new Error("Aucune colonne source n’est configurée pour cette date.");
+      const nextDate = normalizeDate(rawValue);
+      await writeNodeFields(node, { [sourceCol]: nextDate ? toGristDateString(nextDate) : null }, FIELD_LABELS[field] || field);
+      await refreshAfterWrite(node, field, nextDate ? toGristDateString(nextDate) : null);
+      return;
+    }
+    await updateTooltipField(node, field, rawValue);
+  }
+
+  function canAddLevel(level) {
+    const cfg = directMappingConfig.levels[level];
+    if (!allowEditing || !cfg?.tableId || !cfg.nameCol) return false;
+    if (level > 1 && !cfg.parentCol) return false;
+    return true;
+  }
+
+  function parentValueForAdd(level, parentNode) {
+    if (level <= 1) return null;
+    const cfg = directMappingConfig.levels[level];
+    const meta = cfg?.parentCol ? sourceColumnMetaCache.get(metadataKey(cfg.tableId, cfg.parentCol)) : null;
+    const parentId = parentNode?.source?.rowId;
+    if (parentId == null) throw new Error("Le parent n’a pas de ligne source identifiable.");
+    return baseGristType(meta?.type) === "RefList" ? ["L", parentId] : parentId;
+  }
+
+  async function addDirectItem(level, parentNode = null) {
+    if (!canAddLevel(level)) throw new Error(level === 1
+      ? "Configurez la table et la colonne titre du niveau 1, puis autorisez l’édition."
+      : `Configurez la table, la colonne titre et le parent du niveau ${level}, puis autorisez l’édition.`);
+    const cfg = directMappingConfig.levels[level];
+    const fields = { [cfg.nameCol]: `Nouveau niveau ${level}` };
+    if (level > 1) fields[cfg.parentCol] = parentValueForAdd(level, parentNode);
+    await grist.docApi.applyUserActions([["AddRecord", cfg.tableId, null, fields]]);
+    setDebugSyncMode("docApi.applyUserActions (ajout table source)");
+    setDebugAction(`Add ${cfg.tableId}: ${Object.keys(fields).join(", ")}`);
+    if (parentNode) expandedNodes[parentNode.id] = true;
+    await loadAndRenderDirectMapping();
+    showToast(`Niveau ${level} ajouté`, "success");
+  }
+
   function render() {
+    updateViewModeButtons();
     if (!allRecords.length) {
       taskListEl.innerHTML = '<div class="empty">En attente du mapping interne…</div>';
       timelineGridEl.innerHTML = "";
       yearsRowEl.innerHTML = monthsRowEl.innerHTML = weeksRowEl.innerHTML = daysRowEl.innerHTML = "";
       currentPeriodEl.textContent = "–";
       taskCountEl.textContent = "";
+      if (hierarchyTableWrapEl) hierarchyTableWrapEl.innerHTML = '<div class="table-empty">En attente du mapping interne…</div>';
       updateExpandAllButton();
       return;
     }
     initColorFieldSelect();
-    buildHeaders();
-    renderTaskList();
-    renderTimeline();
+    if (viewMode === "timeline") {
+      buildHeaders();
+      renderTaskList();
+      renderTimeline();
+    } else {
+      renderTableView();
+    }
     refreshTableInfo();
     updateExpandAllButton();
   }
+
+
+  function setViewMode(mode) {
+    viewMode = mode;
+    hideTooltip();
+    saveState();
+    render();
+  }
+
+  timelineViewBtn?.addEventListener("click", () => setViewMode("timeline"));
+  tableViewBtn?.addEventListener("click", () => setViewMode("table"));
+
+  async function handleAddLevel1() {
+    try {
+      await addDirectItem(1);
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || "Erreur lors de l’ajout", "error");
+    }
+  }
+
+  addLevel1Btn?.addEventListener("click", handleAddLevel1);
+  tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
+
+  hierarchyTableWrapEl?.addEventListener("click", async (e) => {
+    const toggle = e.target.closest("[data-table-toggle]");
+    if (toggle) {
+      const node = nodeById.get(toggle.dataset.tableToggle);
+      if (!node) return;
+      expandedNodes[node.id] = !isNodeExpanded(node);
+      saveState();
+      render();
+      return;
+    }
+
+    const addBtn = e.target.closest("[data-add-child]");
+    if (!addBtn) return;
+    const parent = nodeById.get(addBtn.dataset.addChild);
+    if (!parent) return;
+    try {
+      await addDirectItem(parent.level + 1, parent);
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || "Erreur lors de l’ajout", "error");
+    }
+  });
+
+  hierarchyTableWrapEl?.addEventListener("change", async (e) => {
+    const input = e.target.closest(".table-cell-editor");
+    if (!input) return;
+    const node = nodeById.get(input.dataset.nodeId);
+    const field = input.dataset.field;
+    if (!node || !field) return;
+    try {
+      await updateTableField(node, field, readTableEditValue(input));
+      showToast("Champ mis à jour dans la table source", "success");
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || "Erreur lors de la mise à jour", "error");
+      renderTableView();
+    }
+  });
+
+  hierarchyTableWrapEl?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches(".table-cell-editor")) {
+      e.preventDefault();
+      e.target.blur();
+    }
+    if (e.key === "Escape" && e.target.matches(".table-cell-editor")) renderTableView();
+  });
 
   if (tooltipEl) {
     tooltipEl.addEventListener("mouseenter", () => cancelTooltipHide());
