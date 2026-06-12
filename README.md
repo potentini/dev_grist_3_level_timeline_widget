@@ -7,6 +7,7 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 ## Fonctionnalités principales
 
 - Affichage Gantt hiérarchique `Niveau 1 → Niveau 2 → Niveau 3`.
+- Avec une vue liée Grist, le widget conserve le contexte hiérarchique : élément sélectionné, parent associé le cas échéant, et tous les enfants visibles dans le mapping.
 - Mapping interne multitable intégré au widget : sélection d’une table source par niveau et mise à jour automatique des listes de champs disponibles.
 - Champs essentiels par niveau : nom, date de début, date de fin, statut, responsable, avancement.
 - Niveau 1 obligatoire ; niveaux 2 et 3 facultatifs.

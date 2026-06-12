@@ -1110,14 +1110,32 @@
 
   function constrainedDirectTree(roots, nodes, levelNodes) {
     const constrainedNodeIds = new Set();
+    const selectedContextNodeIds = new Set();
     let hasConstrainedLevel = false;
-    for (const current of levelNodes.values()) {
+
+    for (const [level, current] of levelNodes.entries()) {
       if (!current.isConstrained) continue;
       hasConstrainedLevel = true;
-      for (const node of current.byRowId.values()) constrainedNodeIds.add(node.id);
+
+      for (const node of current.byRowId.values()) {
+        constrainedNodeIds.add(node.id);
+        selectedContextNodeIds.add(node.id);
+      }
+
+      if (level <= 1) continue;
+      const parent = levelNodes.get(level - 1);
+      if (!parent) continue;
+
+      for (const row of current.rows) {
+        const parentIds = directParentIds(row, current.cfg.parentCol);
+        for (const parentId of parentIds) {
+          const parentNode = parent.byRowId.get(parentId);
+          if (parentNode) selectedContextNodeIds.add(parentNode.id);
+        }
+      }
     }
     if (!hasConstrainedLevel) return { roots, nodes };
-    if (!constrainedNodeIds.size) return { roots: [], nodes: new Map() };
+    if (!constrainedNodeIds.size && !selectedContextNodeIds.size) return { roots: [], nodes: new Map() };
 
     const visibleIds = new Set();
     const descendantVisits = new Set();
@@ -1135,7 +1153,7 @@
       node.children.forEach(includeDescendants);
     }
 
-    for (const nodeId of constrainedNodeIds) {
+    for (const nodeId of selectedContextNodeIds) {
       const node = nodes.get(nodeId);
       if (!node) continue;
       includeAncestors(node);
