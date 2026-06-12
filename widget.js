@@ -38,6 +38,23 @@
   const WIDGET_STATE_OPTION_KEY = "uiState";
   const DIRECT_MAPPING_STORAGE_KEY = "grist_gantt_direct_multitable_mapping_v1";
   const DIRECT_FIELDS = ["name", "start", "end", "status", "responsible", "progress"];
+  const DIRECT_FIELD_AUTOMAP_LABELS = {
+    name: ["Titre"],
+    start: ["DateDebut"],
+    end: ["DateFin"],
+    status: ["Statut"],
+    responsible: ["Responsable"],
+    progress: ["Avancement"]
+  };
+  const TABLE_DEFAULT_VISIBLE_FIELDS = ["name", "start", "end", "status", "responsible", "progress"];
+  const TABLE_FIELD_WIDTHS = {
+    name: "30%",
+    start: "130px",
+    end: "130px",
+    status: "150px",
+    responsible: "170px",
+    progress: "120px"
+  };
 
   let zoomMode = "day";
   let allRecords = [];
@@ -55,6 +72,7 @@
   let allowEditing = false;
   let viewMode = "timeline";
   let timelineSortField = "default";
+  let tableVisibleFields = [...TABLE_DEFAULT_VISIBLE_FIELDS];
   let currentTableId = null;
   let currentViewRecords = null;
   let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
@@ -111,6 +129,7 @@
   const tableToggleEditBtn = document.getElementById("tableToggleEditBtn");
   const timelineDateSortSelect = document.getElementById("timelineDateSortSelect");
   const tableToolbarActionsEl = document.getElementById("tableToolbarActions");
+  const tableFieldSelect = document.getElementById("tableFieldSelect");
   const zoomControlsEl = document.querySelector(".zoom-controls");
 
   const dragState = {
@@ -149,6 +168,7 @@
       viewMode,
       selectedViewMode: viewMode,
       timelineSortField,
+      tableVisibleFields,
       expandedNodes,
       visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
       visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
@@ -168,6 +188,7 @@
     if (includeViewMode && (savedViewMode === "table" || savedViewMode === "timeline")) viewMode = savedViewMode;
     const savedTimelineSortField = s.timelineSortField || s.tableSortField;
     if (isValidDateSortField(savedTimelineSortField)) timelineSortField = savedTimelineSortField;
+    if (Array.isArray(s.tableVisibleFields)) tableVisibleFields = sanitizeTableVisibleFields(s.tableVisibleFields);
     if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
     if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
     if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
@@ -191,16 +212,113 @@
   }
 
   function createEmptyDirectLevelConfig() {
-    return { tableId: "", parentCol: "", nameCol: "", startCol: "", endCol: "", statusCol: "", responsibleCol: "", progressCol: "" };
+    return { tableId: "", parentCol: "", nameCol: "", startCol: "", endCol: "", statusCol: "", responsibleCol: "", progressCol: "", extraFields: [] };
   }
 
   function normalizeDirectMappingConfig(config) {
     const normalized = { levels: {} };
     for (const levelInfo of LEVELS) {
       const existing = config?.levels?.[levelInfo.level] || {};
-      normalized.levels[levelInfo.level] = { ...createEmptyDirectLevelConfig(), ...existing };
+      normalized.levels[levelInfo.level] = normalizeDirectLevelConfig(existing, levelInfo.level);
     }
     return normalized;
+  }
+
+
+  function normalizeExtraField(field, level, index) {
+    const id = String(field?.id || `extra_${level}_${Date.now()}_${index}`).replace(/[^a-zA-Z0-9_-]/g, "_");
+    return { id, label: String(field?.label || "").trim(), colId: String(field?.colId || "") };
+  }
+
+  function normalizeDirectLevelConfig(existing, level) {
+    const cfg = { ...createEmptyDirectLevelConfig(), ...existing };
+    cfg.extraFields = Array.isArray(existing?.extraFields)
+      ? existing.extraFields.map((field, index) => normalizeExtraField(field, level, index)).filter((field) => field.id)
+      : [];
+    return cfg;
+  }
+
+  function normalizeAutomapText(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .toLowerCase();
+  }
+
+  function columnsForTable(tableId, { writableOnly = true } = {}) {
+    return Array.from(sourceColumnMetaCache.values())
+      .filter((col) => col.tableId === tableId && (!writableOnly || !col.isFormula));
+  }
+
+  function findAutomapColumn(tableId, labels, options = {}) {
+    const wanted = new Set(labels.map(normalizeAutomapText));
+    return columnsForTable(tableId, options)
+      .filter((col) => !options.onlyTypes || options.onlyTypes.includes(baseGristType(col.type)))
+      .find((col) => wanted.has(normalizeAutomapText(col.label)) || wanted.has(normalizeAutomapText(col.colId))) || null;
+  }
+
+  function automapDirectLevelConfig(cfg) {
+    if (!cfg?.tableId) return false;
+    let changed = false;
+    for (const field of DIRECT_FIELDS) {
+      const key = `${field}Col`;
+      if (cfg[key]) continue;
+      const onlyTypes = field === "start" || field === "end" ? ["Date", "DateTime"] : null;
+      const col = findAutomapColumn(cfg.tableId, DIRECT_FIELD_AUTOMAP_LABELS[field] || [], { onlyTypes });
+      if (col) {
+        cfg[key] = col.colId;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function fieldKeyForExtra(extra) {
+    return `extra:${extra.id}`;
+  }
+
+  function parseExtraFieldKey(field) {
+    return String(field || "").startsWith("extra:") ? String(field).slice(6) : null;
+  }
+
+  function extraFieldConfigForNode(node, field) {
+    const extraId = parseExtraFieldKey(field);
+    if (!extraId || !node) return null;
+    return node.extraFields?.[extraId] || null;
+  }
+
+  function extraFieldDefinitionsForLevel(level) {
+    const cfg = directMappingConfig.levels[level];
+    return (cfg?.extraFields || []).filter((field) => field.label && field.colId);
+  }
+
+  function allTableFieldDefs() {
+    const defaults = [
+      { field: "name", label: "Élément", width: TABLE_FIELD_WIDTHS.name },
+      { field: "start", label: "Début", width: TABLE_FIELD_WIDTHS.start },
+      { field: "end", label: "Fin", width: TABLE_FIELD_WIDTHS.end },
+      { field: "status", label: "Statut", width: TABLE_FIELD_WIDTHS.status },
+      { field: "responsible", label: "Responsable", width: TABLE_FIELD_WIDTHS.responsible },
+      { field: "progress", label: "Avancement", width: TABLE_FIELD_WIDTHS.progress }
+    ];
+    const extras = [];
+    const seen = new Set(defaults.map((def) => def.field));
+    for (const levelInfo of LEVELS) {
+      for (const extra of extraFieldDefinitionsForLevel(levelInfo.level)) {
+        const field = fieldKeyForExtra(extra);
+        if (seen.has(field)) continue;
+        seen.add(field);
+        extras.push({ field, label: extra.label, width: "150px", level: levelInfo.level });
+      }
+    }
+    return [...defaults, ...extras];
+  }
+
+  function sanitizeTableVisibleFields(fields = tableVisibleFields) {
+    const available = allTableFieldDefs().map((def) => def.field);
+    const selected = fields.filter((field) => available.includes(field));
+    return selected.length ? selected : [...TABLE_DEFAULT_VISIBLE_FIELDS].filter((field) => available.includes(field));
   }
 
   function loadDirectMappingConfig() {
@@ -501,7 +619,8 @@
       nameCol: target.source.nameCol || duplicate.source.nameCol || null,
       statusCol: target.source.statusCol || duplicate.source.statusCol || null,
       responsibleCol: target.source.responsibleCol || duplicate.source.responsibleCol || null,
-      parentCol: target.source.parentCol || duplicate.source.parentCol || null
+      parentCol: target.source.parentCol || duplicate.source.parentCol || null,
+      extraCols: { ...(duplicate.source.extraCols || {}), ...(target.source.extraCols || {}) }
     };
     target.fallbackAliases = target.fallbackAliases || duplicate.fallbackAliases;
   }
@@ -1130,8 +1249,12 @@
       nameCol: cfg.nameCol || null,
       statusCol: cfg.statusCol || null,
       responsibleCol: cfg.responsibleCol || null,
-      parentCol: cfg.parentCol || null
+      parentCol: cfg.parentCol || null,
+      extraCols: {}
     };
+    for (const extra of cfg.extraFields || []) {
+      if (extra?.id && extra.colId) source.extraCols[extra.id] = extra.colId;
+    }
     const node = createEmptyNode({
       id: `L${level}:src:${cfg.tableId}:${rowId}`,
       level,
@@ -1154,6 +1277,14 @@
       responsible: responsibleRaw,
       progress: directFieldValue(row, cfg, "progress")
     };
+    node.extraFields = {};
+    for (const extra of cfg.extraFields || []) {
+      if (!extra?.id || !extra.colId) continue;
+      const raw = row?.[extra.colId];
+      const fieldKey = fieldKeyForExtra(extra);
+      node.extraFields[extra.id] = { ...extra, raw, value: displayValueForField(raw) };
+      node.fieldRawValues[fieldKey] = raw;
+    }
     node.rawRows = [rowId];
     node.isLinkedSelection = false;
     return node;
@@ -1361,7 +1492,7 @@
 
   function scheduleTooltipMetadataRefresh(node) {
     if (!node?.source?.tableId) return;
-    const fields = ["name", "start", "end", "status", "responsible", "progress"];
+    const fields = ["name", "start", "end", "status", "responsible", "progress", ...Object.keys(node.extraFields || {}).map((id) => `extra:${id}`)];
     const needsMetadata = fields.some((field) => {
       const colId = fieldSourceColumn(node, field);
       return colId && !sourceColumnMetaCache.has(metadataKey(node.source.tableId, colId));
@@ -1380,6 +1511,12 @@
   }
 
   function fieldDisplayValue(node, field) {
+    const extra = extraFieldConfigForNode(node, field);
+    if (extra) {
+      const meta = sourceColumnMeta(node, field);
+      if (meta?.refTableId && extra.raw != null && refOptionsCache.has(refOptionsKey(meta))) return labelForRefValue(meta, extra.raw) || extra.value || "";
+      return extra.value || "";
+    }
     if (field === "name") return node.label || "";
     if (field === "status") return node.status || "";
     if (field === "responsible") {
@@ -1390,6 +1527,7 @@
     }
     if (field === "progress") return node.progress == null ? "" : Math.round(node.progress);
     if (field === "start") return formatDate(node.startDate || node.milestoneDate || node.aggStart);
+    if (field === "end") return formatDate(node.endDate || node.aggEnd || node.milestoneDate);
     return "";
   }
 
@@ -1400,7 +1538,13 @@
       { field: "end", label: "Fin", value: formatDate(node.endDate || node.aggEnd || node.milestoneDate), editable: false },
       { field: "status", label: "Statut", value: fieldDisplayValue(node, "status"), editable: allowEditing },
       { field: "responsible", label: "Responsable", value: fieldDisplayValue(node, "responsible"), editable: allowEditing },
-      { field: "progress", label: "Avancement", value: node.progress == null ? "" : `${Math.round(node.progress)}%`, editable: allowEditing }
+      { field: "progress", label: "Avancement", value: node.progress == null ? "" : `${Math.round(node.progress)}%`, editable: allowEditing },
+      ...Object.values(node.extraFields || {}).map((extra) => ({
+        field: fieldKeyForExtra(extra),
+        label: extra.label,
+        value: fieldDisplayValue(node, fieldKeyForExtra(extra)),
+        editable: allowEditing
+      }))
     ];
     return rows
       .filter((row) => row.field === "name" || row.value || row.editable)
@@ -1519,7 +1663,9 @@
     const raw = tooltipState.draftValue ?? rawValueForField(node, row.field);
     const baseType = baseGristType(row.meta?.type);
     let input;
-    if ((baseType === "Choice" || baseType === "ChoiceList") && row.meta?.choices?.length) {
+    if (baseType === "Date" || baseType === "DateTime") {
+      input = `<input data-edit-input type="date" value="${escapeHtml(toGristDateString(normalizeDate(raw)))}" />`;
+    } else if ((baseType === "Choice" || baseType === "ChoiceList") && row.meta?.choices?.length) {
       input = buildChoiceInput(row, raw);
     } else if ((baseType === "Ref" || baseType === "RefList") && row.meta?.refTableId) {
       input = buildRefInput(row, raw);
@@ -1885,6 +2031,8 @@
   }
 
   function fieldSourceColumn(node, field) {
+    const extraId = parseExtraFieldKey(field);
+    if (extraId) return node.source.extraCols?.[extraId] || null;
     if (field === "name") return node.source.nameCol;
     if (field === "status") return node.source.statusCol;
     if (field === "responsible") return node.source.responsibleCol;
@@ -1925,6 +2073,10 @@
 
     const meta = sourceColumnMeta(node, field);
     const baseType = baseGristType(meta?.type);
+    if (baseType === "Date" || baseType === "DateTime") {
+      const date = normalizeDate(rawValue);
+      return date ? toGristDateString(date) : null;
+    }
     if (baseType === "ChoiceList") {
       const values = Array.isArray(rawValue) ? rawValue : splitListValue(rawValue);
       const choices = values.map((value) => String(value).trim()).filter(Boolean);
@@ -2132,14 +2284,6 @@
     if (node) selectNodeForLinkedViews(node);
   }
 
-  const TABLE_FIELDS = [
-    { field: "name", label: "Élément", width: "30%" },
-    { field: "start", label: "Début", width: "130px" },
-    { field: "end", label: "Fin", width: "130px" },
-    { field: "status", label: "Statut", width: "150px" },
-    { field: "responsible", label: "Responsable", width: "170px" },
-    { field: "progress", label: "Avancement", width: "120px" }
-  ];
 
   function updateTimelineDateSortSelect() {
     if (!timelineDateSortSelect) return;
@@ -2172,6 +2316,7 @@
     if (zoomControlsEl) zoomControlsEl.hidden = viewMode !== "timeline";
     if (currentPeriodEl) currentPeriodEl.hidden = viewMode !== "timeline";
     if (tableToolbarActionsEl) tableToolbarActionsEl.hidden = viewMode !== "table";
+    renderTableFieldSelect();
     if (timelineDateSortSelect?.parentElement) timelineDateSortSelect.parentElement.hidden = viewMode !== "timeline";
     updateTimelineDateSortSelect();
   }
@@ -2252,6 +2397,23 @@
     return fieldDisplayValue(node, field);
   }
 
+  function renderTableFieldSelect() {
+    if (!tableFieldSelect) return;
+    const fields = allTableFieldDefs();
+    tableVisibleFields = sanitizeTableVisibleFields(tableVisibleFields);
+    const selected = new Set(tableVisibleFields);
+    tableFieldSelect.innerHTML = fields.map((field) => {
+      const suffix = field.level ? ` (N${field.level})` : "";
+      return `<option value="${escapeHtml(field.field)}" ${selected.has(field.field) ? "selected" : ""}>${escapeHtml(field.label + suffix)}</option>`;
+    }).join("");
+  }
+
+  function visibleTableFieldDefs() {
+    const byField = new Map(allTableFieldDefs().map((field) => [field.field, field]));
+    tableVisibleFields = sanitizeTableVisibleFields(tableVisibleFields);
+    return tableVisibleFields.map((field) => byField.get(field)).filter(Boolean);
+  }
+
   function tableFieldEditable(node, field) {
     if (!allowEditing) return false;
     if (!fieldSourceColumn(node, field)) return false;
@@ -2262,7 +2424,7 @@
   function scheduleTableReferenceRefresh(nodes) {
     const metas = [];
     for (const node of nodes) {
-      for (const field of ["responsible", "status", "name"]) {
+      for (const field of ["responsible", "status", "name", ...Object.keys(node.extraFields || {}).map((id) => `extra:${id}`)]) {
         const meta = sourceColumnMeta(node, field);
         const baseType = baseGristType(meta?.type);
         if ((baseType === "Ref" || baseType === "RefList") && meta?.refTableId && !refOptionsCache.has(refOptionsKey(meta))) {
@@ -2285,8 +2447,8 @@
 
     const meta = sourceColumnMeta(node, field);
     const baseType = baseGristType(meta?.type);
-    if (field === "start" || field === "end") {
-      return `<input ${baseAttrs} type="date" value="${escapeHtml(toGristDateString(value))}" />`;
+    if (field === "start" || field === "end" || baseType === "Date" || baseType === "DateTime") {
+      return `<input ${baseAttrs} type="date" value="${escapeHtml(toGristDateString(normalizeDate(raw) || normalizeDate(value)))}" />`;
     }
     if ((baseType === "Choice" || baseType === "ChoiceList") && meta?.choices?.length) {
       const multiple = baseType === "ChoiceList";
@@ -2316,20 +2478,30 @@
   function renderTableView() {
     if (!hierarchyTableWrapEl) return;
     const rows = visibleTableRows();
+    renderTableFieldSelect();
     if (taskCountEl) taskCountEl.textContent = `${allRecords.length} élément(s)`;
     if (!rows.length) {
       hierarchyTableWrapEl.innerHTML = '<div class="table-empty">Aucun élément à afficher.</div>';
       return;
     }
     scheduleTableReferenceRefresh(rows);
-    const header = TABLE_FIELDS.map((col) => `<th style="width:${col.width}">${escapeHtml(col.label)}</th>`).join("") + '<th style="width:180px">Actions</th>';
+    const tableFields = visibleTableFieldDefs();
+    const header = tableFields.map((col) => `<th style="width:${col.width}">${escapeHtml(col.label)}</th>`).join("") + '<th style="width:180px">Actions</th>';
     const body = rows.map((node) => {
       const color = getColorForNode(node);
       const pad = 10 + (node.level - 1) * 24;
       const toggle = `<button type="button" class="table-expander" data-table-toggle="${escapeHtml(node.id)}" ${node.children.length ? "" : "disabled"}>${node.children.length ? (isNodeExpanded(node) ? "▾" : "▸") : ""}</button>`;
-      const nameCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, "name")}</div>`;
-      const cells = [`<td>${nameCell}</td>`]
-        .concat(TABLE_FIELDS.slice(1).map((col) => `<td>${buildTableInput(node, col.field)}</td>`));
+      const cells = tableFields.map((col, index) => {
+        if (col.field === "name") {
+          const nameCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, "name")}</div>`;
+          return `<td>${nameCell}</td>`;
+        }
+        if (index === 0) {
+          const labelCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, col.field)}</div>`;
+          return `<td>${labelCell}</td>`;
+        }
+        return `<td>${buildTableInput(node, col.field)}</td>`;
+      });
       const canAddChild = node.level < 3 && canAddLevel(node.level + 1);
       const addAction = node.level < 3
         ? `<button type="button" class="btn btn-small row-add-btn" data-add-child="${escapeHtml(node.id)}" ${canAddChild ? "" : "disabled"}>+ Niveau ${node.level + 1}</button>`
@@ -2662,6 +2834,12 @@
   expandAllBtn.addEventListener("click", toggleAllNodes);
   tableExpandAllBtn?.addEventListener("click", toggleAllNodes);
   colorFieldSelect.addEventListener("change", (e) => { colorField = e.target.value; saveState(); render(); });
+  tableFieldSelect?.addEventListener("change", () => {
+    tableVisibleFields = Array.from(tableFieldSelect.selectedOptions).map((option) => option.value);
+    tableVisibleFields = sanitizeTableVisibleFields(tableVisibleFields);
+    saveState();
+    if (viewMode === "table") renderTableView();
+  });
   window.addEventListener("resize", () => {
     if (!allRecords.length) return;
     if (zoomMode === "day") keepOrRecomputeVisibleRange();
@@ -2677,6 +2855,15 @@
       const refTypes = ["Ref", "RefList", "Int", "Numeric"];
       const parentRow = levelInfo.level === 1 ? "" : `
         <div class="row"><label>${escapeHtml(levelInfo.label)} — parent niveau ${levelInfo.level - 1}</label><select data-direct-level="${levelInfo.level}" data-direct-field="parentCol">${columnOptionsHtml(tableId, cfg.parentCol, { onlyTypes: refTypes })}</select></div>`;
+      const extraRows = (cfg.extraFields || []).map((extra) => `
+        <div class="row mapping-extra-row" data-extra-id="${escapeHtml(extra.id)}">
+          <label>Champ libre</label>
+          <div class="mapping-extra-controls">
+            <input type="text" placeholder="Nom affiché" value="${escapeHtml(extra.label)}" data-direct-level="${levelInfo.level}" data-extra-id="${escapeHtml(extra.id)}" data-extra-prop="label" />
+            <select data-direct-level="${levelInfo.level}" data-extra-id="${escapeHtml(extra.id)}" data-extra-prop="colId">${columnOptionsHtml(tableId, extra.colId)}</select>
+            <button type="button" class="btn btn-small" data-remove-extra-field="${escapeHtml(extra.id)}" data-direct-level="${levelInfo.level}">Retirer</button>
+          </div>
+        </div>`).join("");
       return `
         <fieldset class="mapping-level">
           <legend>${escapeHtml(levelInfo.label)}${levelInfo.required ? " (racine)" : ""}</legend>
@@ -2688,6 +2875,8 @@
           <div class="row"><label>Statut</label><select data-direct-level="${levelInfo.level}" data-direct-field="statusCol">${columnOptionsHtml(tableId, cfg.statusCol)}</select></div>
           <div class="row"><label>Responsable</label><select data-direct-level="${levelInfo.level}" data-direct-field="responsibleCol">${columnOptionsHtml(tableId, cfg.responsibleCol)}</select></div>
           <div class="row"><label>Avancement</label><select data-direct-level="${levelInfo.level}" data-direct-field="progressCol">${columnOptionsHtml(tableId, cfg.progressCol)}</select></div>
+          ${extraRows}
+          <div class="mapping-actions"><button type="button" class="btn btn-small" data-add-extra-field="${levelInfo.level}">+ Ajouter un champ</button></div>
         </fieldset>`;
     }).join("");
 
@@ -2704,6 +2893,13 @@
 
   async function ensureDirectMappingPanelReady() {
     await loadSourceColumnMetadata();
+    let changed = false;
+    for (const levelInfo of LEVELS) {
+      const cfg = directMappingConfig.levels[levelInfo.level];
+      const hasManualFields = DIRECT_FIELDS.some((field) => cfg?.[`${field}Col`]);
+      if (cfg?.tableId && !hasManualFields) changed = automapDirectLevelConfig(cfg) || changed;
+    }
+    if (changed) saveDirectMappingConfig();
     renderDirectMappingPanel();
   }
 
@@ -2714,9 +2910,12 @@
       const level = Number(select.dataset.directLevel);
       const field = select.dataset.directField;
       const cfg = directMappingConfig.levels[level];
+      if (!cfg) return;
       cfg[field] = select.value;
       if (field === "tableId") {
         for (const directField of ["parentCol", ...DIRECT_FIELDS.map((name) => `${name}Col`)]) cfg[directField] = "";
+        cfg.extraFields = [];
+        automapDirectLevelConfig(cfg);
       }
       saveDirectMappingConfig();
       directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
@@ -2724,7 +2923,51 @@
       await loadAndRenderDirectMapping();
     });
 
+    mappingPanelEl.addEventListener("input", (e) => {
+      const input = e.target.closest("[data-direct-level][data-extra-id][data-extra-prop]");
+      if (!input) return;
+      const cfg = directMappingConfig.levels[Number(input.dataset.directLevel)];
+      const extra = cfg?.extraFields?.find((field) => field.id === input.dataset.extraId);
+      if (!extra) return;
+      extra[input.dataset.extraProp] = input.value;
+      saveDirectMappingConfig();
+    });
+
+    mappingPanelEl.addEventListener("change", async (e) => {
+      const input = e.target.closest("[data-direct-level][data-extra-id][data-extra-prop]");
+      if (!input) return;
+      const cfg = directMappingConfig.levels[Number(input.dataset.directLevel)];
+      const extra = cfg?.extraFields?.find((field) => field.id === input.dataset.extraId);
+      if (!extra) return;
+      extra[input.dataset.extraProp] = input.value;
+      saveDirectMappingConfig();
+      renderDirectMappingPanel();
+      await loadAndRenderDirectMapping();
+    });
+
     mappingPanelEl.addEventListener("click", async (e) => {
+      const addExtraBtn = e.target.closest("[data-add-extra-field]");
+      if (addExtraBtn) {
+        const level = Number(addExtraBtn.dataset.addExtraField);
+        const cfg = directMappingConfig.levels[level];
+        const id = `extra_${level}_${Date.now()}`;
+        cfg.extraFields.push({ id, label: "", colId: "" });
+        saveDirectMappingConfig();
+        renderDirectMappingPanel();
+        return;
+      }
+      const removeExtraBtn = e.target.closest("[data-remove-extra-field]");
+      if (removeExtraBtn) {
+        const level = Number(removeExtraBtn.dataset.directLevel);
+        const cfg = directMappingConfig.levels[level];
+        cfg.extraFields = (cfg.extraFields || []).filter((field) => field.id !== removeExtraBtn.dataset.removeExtraField);
+        tableVisibleFields = sanitizeTableVisibleFields(tableVisibleFields);
+        saveDirectMappingConfig();
+        saveState();
+        renderDirectMappingPanel();
+        await loadAndRenderDirectMapping();
+        return;
+      }
       if (e.target.closest("#resetManualMappingBtn")) {
         directMappingConfig = normalizeDirectMappingConfig({});
         saveDirectMappingConfig();

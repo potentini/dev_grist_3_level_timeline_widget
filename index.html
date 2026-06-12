@@ -115,11 +115,19 @@
         font-size: 0.7rem;
       }
 
-      .mapping-panel select {
+      .mapping-panel select,
+      .mapping-panel input {
         width: 100%;
         padding: 4px 6px;
         border-radius: 6px;
         border: 1px solid var(--border);
+      }
+
+      .mapping-extra-controls {
+        display: grid;
+        grid-template-columns: minmax(120px, 0.8fr) minmax(160px, 1fr) auto;
+        gap: 6px;
+        align-items: center;
       }
 
       .header-actions {
@@ -998,6 +1006,10 @@
           <button class="btn btn-small active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
           <button class="btn btn-small" id="tableExpandAllBtn" type="button">Tout déplier</button>
           <button class="btn btn-small" id="tableToggleEditBtn" type="button">Édition bloquée</button>
+          <div class="control">
+            <label for="tableFieldSelect">Champs table</label>
+            <select id="tableFieldSelect" multiple size="3"></select>
+          </div>
         </div>
 
         <div class="control">
