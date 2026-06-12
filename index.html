@@ -151,6 +151,55 @@
         white-space: nowrap;
       }
 
+
+      .control-label {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .table-field-control {
+        align-items: flex-start;
+      }
+
+      .table-field-selector,
+      .table-filter-panel {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        max-width: 420px;
+      }
+
+      .field-check,
+      .filter-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 7px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: #fff;
+        color: var(--text);
+        font-size: 0.72rem;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .field-check input,
+      .filter-check input {
+        width: auto;
+        margin: 0;
+        accent-color: var(--primary);
+      }
+
+      .field-check:has(input:not(:checked)),
+      .filter-check:has(input:not(:checked)) {
+        color: var(--text-muted);
+        background: #f8fafc;
+        font-weight: 600;
+      }
+
       .control select {
         padding: 2px 6px;
         border-radius: 8px;
@@ -659,6 +708,66 @@
         letter-spacing: 0.04em;
       }
 
+
+      .table-header-cell {
+        display: grid;
+        gap: 4px;
+      }
+
+      .table-header-main {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 5px;
+      }
+
+      .table-header-title {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .table-sort-btn,
+      .table-date-sort-btn,
+      .table-filter-clear {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #fff;
+        color: var(--text-muted);
+        cursor: pointer;
+        font-size: 0.68rem;
+        font-weight: 800;
+        padding: 1px 5px;
+      }
+
+      .table-sort-btn.active,
+      .table-date-sort-btn.active,
+      .table-filter-clear.active {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: #fff;
+      }
+
+      .table-date-sort-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
+      }
+
+      .table-filter-panel {
+        max-height: 110px;
+        overflow: auto;
+        padding-top: 2px;
+      }
+
+      .table-filter-empty {
+        color: var(--text-muted);
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+
       .hierarchy-table tr:hover td { background: #fafbff; }
       .hierarchy-table tr.level-1 td { background: #fbfdff; }
       .hierarchy-table tr.level-1:hover td { background: #f5f7ff; }
@@ -1006,9 +1115,9 @@
           <button class="btn btn-small active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
           <button class="btn btn-small" id="tableExpandAllBtn" type="button">Tout déplier</button>
           <button class="btn btn-small" id="tableToggleEditBtn" type="button">Édition bloquée</button>
-          <div class="control">
-            <label for="tableFieldSelect">Champs table</label>
-            <select id="tableFieldSelect" multiple size="3"></select>
+          <div class="control table-field-control">
+            <span class="control-label">Sélecteur champs</span>
+            <div class="table-field-selector" id="tableFieldSelect"></div>
           </div>
         </div>
 
