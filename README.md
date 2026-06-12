@@ -7,10 +7,10 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 ## Fonctionnalités principales
 
 - Affichage Gantt hiérarchique `Niveau 1 → Niveau 2 → Niveau 3`.
-- Vue table hiérarchique alternative, visuellement cohérente avec la timeline, avec champs en colonnes, édition directe des cellules sans infobulle, et sélecteur `Trier par` pour ordonner la hiérarchie selon `DateDebut1`, `DateFin1`, `DateDebut2`, `DateFin2`, `DateDebut3` ou `DateFin3`.
+- Vue table hiérarchique alternative, visuellement cohérente avec la timeline, avec champs en colonnes, édition directe des cellules sans infobulle, sélecteur des champs à afficher, et sélecteur `Trier par` pour ordonner la hiérarchie selon `DateDebut1`, `DateFin1`, `DateDebut2`, `DateFin2`, `DateDebut3` ou `DateFin3`.
 - Avec une vue liée Grist, le widget conserve le contexte hiérarchique : élément sélectionné, parent associé le cas échéant, tous les enfants visibles dans le mapping, et sélectionne le plus haut nœud pertinent pour alimenter les filtres des vues liées.
-- Mapping interne multitable intégré au widget : sélection d’une table source par niveau et mise à jour automatique des listes de champs disponibles.
-- Champs essentiels par niveau : nom, date de début, date de fin, statut, responsable, avancement.
+- Mapping interne multitable intégré au widget : sélection d’une table source par niveau, automapping des champs libellés `Titre`, `DateDebut`, `DateFin`, `Statut`, `Responsable` et `Avancement`, et mise à jour automatique des listes de champs disponibles.
+- Champs essentiels par niveau : nom, date de début, date de fin, statut, responsable, avancement, avec champs libres additionnels nommables et mappables depuis la table du niveau.
 - Niveau 1 obligatoire ; niveaux 2 et 3 facultatifs.
 - Zoom temporel : `jour`, `semaine`, `mois`, `année`, `tout`.
 - Navigation temporelle : précédent / suivant / aujourd’hui, avec aujourd’hui placé par défaut dans le deuxième tiers de la timeline et un pas de déplacement très réduit.
@@ -36,6 +36,8 @@ Ouvrez le panneau `Mapping`, puis configurez :
 - **Niveau 2** : table source du deuxième niveau + colonne `Parent niveau 1` qui référence la ligne du niveau 1 + les mêmes champs métier.
 - **Niveau 3** : table source du troisième niveau + colonne `Parent niveau 2` qui référence la ligne du niveau 2 + les mêmes champs métier.
 
+Quand une table est choisie, les champs essentiels sont automatiquement préremplis si la table contient des colonnes libellées ou nommées exactement `Titre`, `DateDebut`, `DateFin`, `Statut`, `Responsable` et `Avancement` (les accents et séparateurs sont normalisés pour la détection). Chaque niveau propose aussi `+ Ajouter un champ` pour créer un champ libre, saisir son nom affiché et le mapper sur une colonne non-formule de la table sélectionnée.
+
 Dès qu’une table est choisie dans ce panneau, le widget utilise `grist.docApi.fetchTable` pour lire les vraies tables sources. Les écritures depuis l’infobulle ou le glisser-déposer utilisent ensuite `UpdateRecord` sur la table et la ligne source connues.
 
 Le mapping interne est sauvegardé localement dans le navigateur sous la clé `grist_gantt_direct_multitable_mapping_v1`.
@@ -58,6 +60,7 @@ Quand un champ devient éditable dans l’infobulle, le widget lit les métadonn
 5. Activer l’édition avec le bouton `Édition bloquée/autorisée`.
 6. Modifier un champ depuis l’infobulle, déplacer/redimensionner une barre explicitement datée ou basculer en vue `Table` pour modifier directement les cellules.
 7. En vue `Table`, utiliser `+ Ajouter un niveau 1` ou les boutons `+ Niveau 2` / `+ Niveau 3` des lignes parentes pour créer des éléments rattachés dans les tables sources.
+8. Utiliser le sélecteur `Champs table` de la vue `Table` pour choisir les colonnes affichées, y compris les champs libres ajoutés dans le mapping.
 
 ## Détails techniques
 
