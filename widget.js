@@ -2164,7 +2164,7 @@
 
   async function refreshAfterWrite(node, field, value) {
     if (directMappingModeActive) {
-      await loadAndRenderDirectMapping();
+      await DataModel.loadAndRenderDirectMapping();
       return;
     }
     applyLocalTooltipValue(node, field, value);
@@ -2561,7 +2561,7 @@
     setDebugAction(`Remove ${node.source.tableId}#${node.source.rowId}`);
     if (selectedNodeId === node.id) selectedNodeId = null;
     hideTooltip();
-    await loadAndRenderDirectMapping();
+    await DataModel.loadAndRenderDirectMapping();
     showToast("Élément supprimé définitivement", "success");
     return true;
   }
@@ -2577,7 +2577,7 @@
     setDebugSyncMode("docApi.applyUserActions (ajout table source)");
     setDebugAction(`Add ${cfg.tableId}: ${Object.keys(fields).join(", ")}`);
     if (parentNode) expandedNodes[parentNode.id] = true;
-    await loadAndRenderDirectMapping();
+    await DataModel.loadAndRenderDirectMapping();
     showToast(`Niveau ${level} ajouté`, "success");
   }
 
@@ -2595,11 +2595,11 @@
     }
     initColorFieldSelect();
     if (viewMode === "timeline") {
-      buildHeaders();
-      renderTaskList();
-      renderTimeline();
+      TimelineView.buildHeaders();
+      TimelineView.renderTaskList();
+      TimelineView.renderTimeline();
     } else {
-      renderTableView();
+      TableView.renderTableView();
     }
     refreshTableInfo();
     updateExpandAllButton();
@@ -2612,9 +2612,6 @@
     saveState();
     render();
   }
-
-  timelineViewBtn?.addEventListener("click", () => setViewMode("timeline"));
-  tableViewBtn?.addEventListener("click", () => setViewMode("table"));
 
   function toggleEditing() {
     allowEditing = !allowEditing;
@@ -2643,73 +2640,126 @@
     }
   }
 
-  addLevel1Btn?.addEventListener("click", handleAddLevel1);
-  tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
+  function bindTableHandlers() {
+    tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
 
-  hierarchyTableWrapEl?.addEventListener("click", async (e) => {
-    const toggle = e.target.closest("[data-table-toggle]");
-    if (toggle) {
-      const node = nodeById.get(toggle.dataset.tableToggle);
-      if (!node) return;
-      expandedNodes[node.id] = !isNodeExpanded(node);
-      saveState();
-      render();
-      return;
-    }
+    hierarchyTableWrapEl?.addEventListener("click", async (e) => {
+      const toggle = e.target.closest("[data-table-toggle]");
+      if (toggle) {
+        const node = nodeById.get(toggle.dataset.tableToggle);
+        if (!node) return;
+        expandedNodes[node.id] = !isNodeExpanded(node);
+        saveState();
+        render();
+        return;
+      }
 
-    const deleteBtn = e.target.closest("[data-delete-node]");
-    if (deleteBtn) {
-      const node = nodeById.get(deleteBtn.dataset.deleteNode);
-      if (!node) return;
+      const deleteBtn = e.target.closest("[data-delete-node]");
+      if (deleteBtn) {
+        const node = nodeById.get(deleteBtn.dataset.deleteNode);
+        if (!node) return;
+        try {
+          await deleteDirectItem(node);
+        } catch (err) {
+          console.error(err);
+          showToast(err.message || "Erreur lors de la suppression", "error");
+        }
+        return;
+      }
+
+      const addBtn = e.target.closest("[data-add-child]");
+      if (addBtn) {
+        const parent = nodeById.get(addBtn.dataset.addChild);
+        if (!parent) return;
+        try {
+          await addDirectItem(parent.level + 1, parent);
+        } catch (err) {
+          console.error(err);
+          showToast(err.message || "Erreur lors de l’ajout", "error");
+        }
+        return;
+      }
+
+      const row = e.target.closest("tr[data-node-id]");
+      if (row && !e.target.closest(".table-cell-editor")) selectNodeByIdForLinkedViews(row.dataset.nodeId);
+    });
+
+    hierarchyTableWrapEl?.addEventListener("change", async (e) => {
+      const input = e.target.closest(".table-cell-editor");
+      if (!input) return;
+      const node = nodeById.get(input.dataset.nodeId);
+      const field = input.dataset.field;
+      if (!node || !field) return;
       try {
-        await deleteDirectItem(node);
+        await updateTableField(node, field, readTableEditValue(input));
+        showToast("Champ mis à jour dans la table source", "success");
       } catch (err) {
         console.error(err);
-        showToast(err.message || "Erreur lors de la suppression", "error");
+        showToast(err.message || "Erreur lors de la mise à jour", "error");
+        renderTableView();
       }
-      return;
-    }
+    });
 
-    const addBtn = e.target.closest("[data-add-child]");
-    if (addBtn) {
-      const parent = nodeById.get(addBtn.dataset.addChild);
-      if (!parent) return;
-      try {
-        await addDirectItem(parent.level + 1, parent);
-      } catch (err) {
-        console.error(err);
-        showToast(err.message || "Erreur lors de l’ajout", "error");
+    hierarchyTableWrapEl?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.matches(".table-cell-editor")) {
+        e.preventDefault();
+        e.target.blur();
       }
-      return;
-    }
+      if (e.key === "Escape" && e.target.matches(".table-cell-editor")) renderTableView();
+    });
+  }
 
-    const row = e.target.closest("tr[data-node-id]");
-    if (row && !e.target.closest(".table-cell-editor")) selectNodeByIdForLinkedViews(row.dataset.nodeId);
+  // Modules internes : chaque façade regroupe un périmètre fonctionnel tout en conservant
+  // un seul fichier widget.js chargé par index.html pour le widget Grist.
+  const DataModel = Object.freeze({
+    buildDirectMultitableRecords,
+    loadAndRenderDirectMapping,
+    directNodeFromRow,
+    writeNodeFields,
+    loadSourceColumnMetadata,
+    rowsFromGristTable,
+    sourceColumnMeta,
+    computeGlobalRange,
+    finalizeTreeDates
   });
 
-  hierarchyTableWrapEl?.addEventListener("change", async (e) => {
-    const input = e.target.closest(".table-cell-editor");
-    if (!input) return;
-    const node = nodeById.get(input.dataset.nodeId);
-    const field = input.dataset.field;
-    if (!node || !field) return;
-    try {
-      await updateTableField(node, field, readTableEditValue(input));
-      showToast("Champ mis à jour dans la table source", "success");
-    } catch (err) {
-      console.error(err);
-      showToast(err.message || "Erreur lors de la mise à jour", "error");
-      renderTableView();
-    }
+  const TimelineView = Object.freeze({
+    buildTracks,
+    buildHeaders,
+    renderTaskList,
+    renderTimeline,
+    showTooltip,
+    hideTooltip,
+    refreshActiveTooltip,
+    attachBarDrag,
+    attachMilestoneDrag,
+    onDragMove,
+    onDragEnd
   });
 
-  hierarchyTableWrapEl?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && e.target.matches(".table-cell-editor")) {
-      e.preventDefault();
-      e.target.blur();
-    }
-    if (e.key === "Escape" && e.target.matches(".table-cell-editor")) renderTableView();
+  const TableView = Object.freeze({
+    visibleTableRows,
+    renderTableFieldSelect,
+    buildTableInput,
+    renderTableView,
+    bindHandlers: bindTableHandlers,
+    readTableEditValue,
+    updateTableField
   });
+
+  const Controller = Object.freeze({
+    render,
+    setViewMode,
+    toggleEditing,
+    toggleAllNodes,
+    handleAddLevel1,
+    get viewMode() { return viewMode; }
+  });
+
+  timelineViewBtn?.addEventListener("click", () => Controller.setViewMode("timeline"));
+  tableViewBtn?.addEventListener("click", () => Controller.setViewMode("table"));
+  addLevel1Btn?.addEventListener("click", Controller.handleAddLevel1);
+  TableView.bindHandlers();
 
   if (tooltipEl) {
     tooltipEl.addEventListener("mouseenter", () => cancelTooltipHide());
@@ -2920,7 +2970,7 @@
       saveDirectMappingConfig();
       directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
       renderDirectMappingPanel();
-      await loadAndRenderDirectMapping();
+      await DataModel.loadAndRenderDirectMapping();
     });
 
     mappingPanelEl.addEventListener("input", (e) => {
@@ -2942,7 +2992,7 @@
       extra[input.dataset.extraProp] = input.value;
       saveDirectMappingConfig();
       renderDirectMappingPanel();
-      await loadAndRenderDirectMapping();
+      await DataModel.loadAndRenderDirectMapping();
     });
 
     mappingPanelEl.addEventListener("click", async (e) => {
@@ -2965,7 +3015,7 @@
         saveDirectMappingConfig();
         saveState();
         renderDirectMappingPanel();
-        await loadAndRenderDirectMapping();
+        await DataModel.loadAndRenderDirectMapping();
         return;
       }
       if (e.target.closest("#resetManualMappingBtn")) {
@@ -2976,7 +3026,7 @@
         showToast("Mapping interne réinitialisé", "success");
         return;
       }
-      if (e.target.closest("#reloadDirectMappingBtn")) await loadAndRenderDirectMapping();
+      if (e.target.closest("#reloadDirectMappingBtn")) await DataModel.loadAndRenderDirectMapping();
     });
   }
 
@@ -3026,7 +3076,7 @@
       currentTableId = null;
     }
 
-    if (await loadAndRenderDirectMapping()) return;
+    if (await DataModel.loadAndRenderDirectMapping()) return;
 
     allRecords = [];
     treeRoots = [];
