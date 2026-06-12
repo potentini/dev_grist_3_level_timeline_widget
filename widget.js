@@ -147,7 +147,8 @@
       if (typeof s.compactChildren === "boolean") compactChildren = s.compactChildren;
       if (typeof s.allowEditing === "boolean") allowEditing = s.allowEditing;
       else if (typeof s.allowTimelineDateEdit === "boolean") allowEditing = s.allowTimelineDateEdit;
-      if (s.viewMode === "table" || s.viewMode === "timeline") viewMode = s.viewMode;
+      const savedViewMode = s.selectedViewMode || s.viewMode;
+      if (savedViewMode === "table" || savedViewMode === "timeline") viewMode = savedViewMode;
       if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
       if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
       if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
@@ -199,6 +200,7 @@
         compactChildren,
         allowEditing,
         viewMode,
+        selectedViewMode: viewMode,
         expandedNodes,
         visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
         visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
@@ -1114,6 +1116,7 @@
       progress: directFieldValue(row, cfg, "progress")
     };
     node.rawRows = [rowId];
+    node.isLinkedSelection = false;
     return node;
   }
 
@@ -1182,6 +1185,11 @@
       descendantVisits.add(node.id);
       visibleIds.add(node.id);
       node.children.forEach(includeDescendants);
+    }
+
+    for (const nodeId of constrainedNodeIds) {
+      const node = nodes.get(nodeId);
+      if (node) node.isLinkedSelection = true;
     }
 
     for (const nodeId of selectedContextNodeIds) {
@@ -2027,11 +2035,32 @@
     return Math.trunc(rowId);
   }
 
+  function ancestorChainForNode(node) {
+    const chain = [];
+    let current = node;
+    while (current) {
+      chain.unshift(current);
+      current = current.parentId ? nodeById.get(current.parentId) : null;
+    }
+    return chain;
+  }
+
+  function highestLinkedSelectionNode(node) {
+    const chain = ancestorChainForNode(node);
+    if (!chain.length) return node;
+    if (currentTableId) {
+      const matchingAncestor = chain.find((candidate) => candidate.source?.tableId === currentTableId);
+      if (matchingAncestor) return matchingAncestor;
+    }
+    return chain[0];
+  }
+
   async function selectNodeForLinkedViews(node) {
     if (!node) return;
     selectedNodeId = node.id;
     applyNodeSelectionClasses();
-    const rowId = linkedRowIdForNode(node);
+    const linkedNode = highestLinkedSelectionNode(node);
+    const rowId = linkedRowIdForNode(linkedNode);
     if (rowId == null) {
       setDebugAction(`Sélection locale ${node.source.tableId || "source"}#${node.source.rowId ?? "?"} (hors table liée)`);
       return;
@@ -2039,7 +2068,8 @@
     try {
       await grist.setSelectedRows([rowId]);
       await grist.setCursorPos({ rowId, linkingRowIds: [rowId] });
-      setDebugAction(`Sélection liée ${node.source.tableId || currentTableId || "table"}#${rowId}`);
+      const suffix = linkedNode.id !== node.id ? ` via ${linkedNode.source.tableId || currentTableId || "table"}#${rowId}` : ` ${linkedNode.source.tableId || currentTableId || "table"}#${rowId}`;
+      setDebugAction(`Sélection liée${suffix}`);
     } catch (err) {
       console.warn("Impossible de transmettre la sélection aux vues liées :", err);
     }
@@ -2078,13 +2108,21 @@
     if (tableToolbarActionsEl) tableToolbarActionsEl.hidden = viewMode !== "table";
   }
 
+  function hasLinkedSelectionInSubtree(node) {
+    if (node.isLinkedSelection) return true;
+    return node.children.some(hasLinkedSelectionInSubtree);
+  }
+
   function visibleTableRows() {
     const rows = [];
     function walk(node) {
       rows.push(node);
-      if (isNodeExpanded(node)) node.children.forEach(walk);
+      const expanded = isNodeExpanded(node);
+      for (const child of node.children) {
+        if (expanded || hasLinkedSelectionInSubtree(child)) walk(child);
+      }
     }
-    treeRoots.forEach(walk);
+    treeRoots.forEach((root) => walk(root));
     return rows;
   }
 

@@ -7,8 +7,8 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 ## Fonctionnalités principales
 
 - Affichage Gantt hiérarchique `Niveau 1 → Niveau 2 → Niveau 3`.
-- Vue table hiérarchique alternative, visuellement cohérente avec la timeline, avec champs en colonnes et édition directe des cellules sans infobulle.
-- Avec une vue liée Grist, le widget conserve le contexte hiérarchique : élément sélectionné, parent associé le cas échéant, et tous les enfants visibles dans le mapping.
+- Vue table hiérarchique alternative, visuellement cohérente avec la timeline, avec champs en colonnes et édition directe des cellules sans infobulle, y compris pour les éléments issus d’une vue liée quand l’arbre est replié.
+- Avec une vue liée Grist, le widget conserve le contexte hiérarchique : élément sélectionné, parent associé le cas échéant, tous les enfants visibles dans le mapping, et sélectionne le plus haut nœud pertinent pour alimenter les filtres des vues liées.
 - Mapping interne multitable intégré au widget : sélection d’une table source par niveau et mise à jour automatique des listes de champs disponibles.
 - Champs essentiels par niveau : nom, date de début, date de fin, statut, responsable, avancement.
 - Niveau 1 obligatoire ; niveaux 2 et 3 facultatifs.
@@ -20,7 +20,7 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 - Ajout depuis la vue table : bouton global pour créer un niveau 1, boutons `+` sur les lignes de niveau 1 pour créer un niveau 2 rattaché, et boutons `+` sur les lignes de niveau 2 pour créer un niveau 3 rattaché.
 - Bouton global `Édition bloquée/autorisée` : quand il est activé, l’édition des dates par glisser-déposer et l’édition depuis l’infobulle sont autorisées ; quand il est désactivé, aucune édition n’est possible.
 - Routage d’écriture vers les tables sources via `grist.docApi.applyUserActions`.
-- Persistance locale de l’état UI via `localStorage`.
+- Persistance locale de l’état UI via `localStorage`, dont la vue active `Timeline` ou `Table`.
 
 ## Structure du projet
 
