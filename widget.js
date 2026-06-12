@@ -104,6 +104,9 @@
   const tableViewEl = document.getElementById("tableView");
   const hierarchyTableWrapEl = document.getElementById("hierarchyTableWrap");
   const tableAddLevel1Btn = document.getElementById("tableAddLevel1Btn");
+  const tableExpandAllBtn = document.getElementById("tableExpandAllBtn");
+  const tableToggleEditBtn = document.getElementById("tableToggleEditBtn");
+  const zoomControlsEl = document.querySelector(".zoom-controls");
 
   const dragState = {
     active: false,
@@ -1630,7 +1633,7 @@
         timelineGridEl.appendChild(m);
         if (labelsVisible && !hideLabel) {
           const label = document.createElement("span");
-          label.className = "milestone-label";
+          label.className = `milestone-label level-${node.level}`;
           label.textContent = node.label;
           label.style.left = (x + 18) + "px";
           label.style.top = centerY + "px";
@@ -1986,9 +1989,21 @@
   }
 
   function updateExpandAllButton() {
-    if (!expandAllBtn) return;
-    expandAllBtn.textContent = areAllCollapsibleNodesExpanded() ? "Tout plier" : "Tout déplier";
-    expandAllBtn.disabled = !hasCollapsibleNodes();
+    const label = areAllCollapsibleNodesExpanded() ? "Tout plier" : "Tout déplier";
+    const disabled = !hasCollapsibleNodes();
+    [expandAllBtn, tableExpandAllBtn].forEach((btn) => {
+      if (!btn) return;
+      btn.textContent = label;
+      btn.disabled = disabled;
+    });
+  }
+
+  function updateEditButtons() {
+    [toggleDateEditBtn, tableToggleEditBtn].forEach((btn) => {
+      if (!btn) return;
+      btn.textContent = allowEditing ? "Édition autorisée" : "Édition bloquée";
+      btn.classList.toggle("active", allowEditing);
+    });
   }
 
 
@@ -2008,12 +2023,16 @@
     if (ganttContainer) ganttContainer.hidden = viewMode !== "timeline";
     if (tableViewEl) tableViewEl.hidden = viewMode !== "table";
     if (addLevel1Btn) {
-      addLevel1Btn.hidden = viewMode !== "table";
+      addLevel1Btn.hidden = true;
       addLevel1Btn.disabled = !canAddLevel(1);
     }
     if (tableAddLevel1Btn) tableAddLevel1Btn.disabled = !canAddLevel(1);
-    const timelineOnly = [prevBtn, nextBtn, todayBtn, toggleSidebarBtn, toggleLabelsBtn, groupChildrenBtn];
+    if (tableExpandAllBtn) tableExpandAllBtn.disabled = !hasCollapsibleNodes();
+    updateEditButtons();
+    const timelineOnly = [expandAllBtn, prevBtn, nextBtn, todayBtn, toggleSidebarBtn, toggleLabelsBtn, groupChildrenBtn, toggleDateEditBtn];
     timelineOnly.forEach((btn) => { if (btn) btn.hidden = viewMode !== "timeline"; });
+    if (zoomControlsEl) zoomControlsEl.hidden = viewMode !== "timeline";
+    if (currentPeriodEl) currentPeriodEl.hidden = viewMode !== "timeline";
   }
 
   function visibleTableRows() {
@@ -2204,6 +2223,24 @@
   timelineViewBtn?.addEventListener("click", () => setViewMode("timeline"));
   tableViewBtn?.addEventListener("click", () => setViewMode("table"));
 
+  function toggleEditing() {
+    allowEditing = !allowEditing;
+    updateEditButtons();
+    if (!allowEditing && tooltipState.editingField) {
+      tooltipState.editingField = null;
+      tooltipState.draftValue = null;
+      refreshActiveTooltip();
+    }
+    saveState();
+  }
+
+  function toggleAllNodes() {
+    const shouldExpand = !areAllCollapsibleNodesExpanded();
+    allRecords.forEach((n) => { if (n.children.length) expandedNodes[n.id] = shouldExpand; });
+    saveState();
+    render();
+  }
+
   async function handleAddLevel1() {
     try {
       await addDirectItem(1);
@@ -2374,23 +2411,10 @@
     saveState();
     render();
   });
-  toggleDateEditBtn.addEventListener("click", () => {
-    allowEditing = !allowEditing;
-    toggleDateEditBtn.textContent = allowEditing ? "Édition autorisée" : "Édition bloquée";
-    toggleDateEditBtn.classList.toggle("active", allowEditing);
-    if (!allowEditing && tooltipState.editingField) {
-      tooltipState.editingField = null;
-      tooltipState.draftValue = null;
-      refreshActiveTooltip();
-    }
-    saveState();
-  });
-  expandAllBtn.addEventListener("click", () => {
-    const shouldExpand = !areAllCollapsibleNodesExpanded();
-    allRecords.forEach((n) => { if (n.children.length) expandedNodes[n.id] = shouldExpand; });
-    saveState();
-    render();
-  });
+  toggleDateEditBtn.addEventListener("click", toggleEditing);
+  tableToggleEditBtn?.addEventListener("click", toggleEditing);
+  expandAllBtn.addEventListener("click", toggleAllNodes);
+  tableExpandAllBtn?.addEventListener("click", toggleAllNodes);
   colorFieldSelect.addEventListener("change", (e) => { colorField = e.target.value; saveState(); render(); });
   window.addEventListener("resize", () => {
     if (!allRecords.length) return;
@@ -2484,8 +2508,7 @@
     });
   }
 
-  toggleDateEditBtn.textContent = allowEditing ? "Édition autorisée" : "Édition bloquée";
-  toggleDateEditBtn.classList.toggle("active", allowEditing);
+  updateEditButtons();
   toggleLabelsBtn.textContent = labelsVisible ? "Masquer labels" : "Afficher labels";
   groupChildrenBtn.textContent = compactChildren ? "Niveaux bas : 1 ligne" : "Niveaux bas : multi-lignes";
   updateExpandAllButton();
