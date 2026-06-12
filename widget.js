@@ -1058,8 +1058,8 @@
   }
 
   function directNodeFromRow(row, level, cfg, sourceIndex) {
-    const rowId = Number(row.id ?? row.Id ?? row.ID);
-    if (!Number.isFinite(rowId)) return null;
+    const rowId = rowIdFromGristRow(row);
+    if (rowId == null) return null;
     const label = String(directFieldValue(row, cfg, "name") || row.Name || row.name || row.id || "").trim();
     const startDate = normalizeDate(directFieldValue(row, cfg, "start"));
     const endDate = normalizeDate(directFieldValue(row, cfg, "end"));
@@ -1099,13 +1099,26 @@
     return node;
   }
 
+  function rowIdFromGristRow(row) {
+    const rowId = Number(row?.id ?? row?.Id ?? row?.ID);
+    return Number.isFinite(rowId) ? rowId : null;
+  }
+
   function isDirectLevelDrivenByCurrentView(cfg) {
     return !!(cfg?.tableId && currentTableId && cfg.tableId === currentTableId && Array.isArray(currentViewRecords));
   }
 
-  function directRowsForLevel(cfg) {
-    if (isDirectLevelDrivenByCurrentView(cfg)) return currentViewRecords;
-    return null;
+  async function directRowsForLevel(cfg) {
+    const sourceRows = rowsFromGristTable(await grist.docApi.fetchTable(cfg.tableId));
+    if (!isDirectLevelDrivenByCurrentView(cfg)) return { rows: sourceRows, isConstrained: false };
+
+    const visibleRowIds = new Set(currentViewRecords.map(rowIdFromGristRow).filter((rowId) => rowId != null));
+    if (!visibleRowIds.size) return { rows: [], isConstrained: true };
+
+    return {
+      rows: sourceRows.filter((row) => visibleRowIds.has(rowIdFromGristRow(row))),
+      isConstrained: true
+    };
   }
 
   function constrainedDirectTree(roots, nodes, levelNodes) {
@@ -1184,9 +1197,8 @@
     for (const levelInfo of LEVELS) {
       const cfg = directMappingConfig.levels[levelInfo.level];
       if (!cfg?.tableId || !cfg.nameCol) continue;
-      const viewRows = directRowsForLevel(cfg);
-      const rows = viewRows || rowsFromGristTable(await grist.docApi.fetchTable(cfg.tableId));
-      if (viewRows) constrainedLevels.add(levelInfo.level);
+      const { rows, isConstrained } = await directRowsForLevel(cfg);
+      if (isConstrained) constrainedLevels.add(levelInfo.level);
       const byRowId = new Map();
       for (const row of rows) {
         const node = directNodeFromRow(row, levelInfo.level, cfg, sourceIndex++);
@@ -1194,7 +1206,7 @@
         nodes.set(node.id, node);
         byRowId.set(node.source.rowId, node);
       }
-      levelNodes.set(levelInfo.level, { rows, byRowId, cfg, isConstrained: !!viewRows });
+      levelNodes.set(levelInfo.level, { rows, byRowId, cfg, isConstrained });
     }
 
     const hasConstrainedLevel = constrainedLevels.size > 0;
@@ -1210,7 +1222,7 @@
       }
       const parent = levelNodes.get(level - 1);
       for (const row of current.rows) {
-        const rowId = Number(row.id ?? row.Id ?? row.ID);
+        const rowId = rowIdFromGristRow(row);
         const node = current.byRowId.get(rowId);
         if (!node) continue;
         const parentIds = directParentIds(row, current.cfg.parentCol);
