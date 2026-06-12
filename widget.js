@@ -73,8 +73,6 @@
   let viewMode = "timeline";
   let timelineSortField = "default";
   let tableVisibleFields = [...TABLE_DEFAULT_VISIBLE_FIELDS];
-  let tableSortState = { field: null, direction: "asc", level: null };
-  let tableFilters = {};
   let currentTableId = null;
   let currentViewRecords = null;
   let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
@@ -171,8 +169,6 @@
       selectedViewMode: viewMode,
       timelineSortField,
       tableVisibleFields,
-      tableSortState,
-      tableFilters,
       expandedNodes,
       visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
       visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
@@ -193,8 +189,6 @@
     const savedTimelineSortField = s.timelineSortField || s.tableSortField;
     if (isValidDateSortField(savedTimelineSortField)) timelineSortField = savedTimelineSortField;
     if (Array.isArray(s.tableVisibleFields)) tableVisibleFields = sanitizeTableVisibleFields(s.tableVisibleFields);
-    if (s.tableSortState && typeof s.tableSortState === "object") tableSortState = sanitizeTableSortState(s.tableSortState);
-    if (s.tableFilters && typeof s.tableFilters === "object") tableFilters = sanitizeTableFilters(s.tableFilters);
     if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
     if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
     if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
@@ -325,30 +319,6 @@
     const available = allTableFieldDefs().map((def) => def.field);
     const selected = fields.filter((field) => available.includes(field));
     return selected.length ? selected : [...TABLE_DEFAULT_VISIBLE_FIELDS].filter((field) => available.includes(field));
-  }
-
-
-  function sanitizeTableSortState(state = tableSortState) {
-    const fields = new Set(allTableFieldDefs().map((def) => def.field));
-    const field = fields.has(state?.field) ? state.field : null;
-    const direction = state?.direction === "desc" ? "desc" : "asc";
-    const level = [1, 2, 3].includes(Number(state?.level)) ? Number(state.level) : null;
-    return { field, direction, level };
-  }
-
-  function sanitizeTableFilters(filters = tableFilters) {
-    const fields = new Set(allTableFieldDefs().map((def) => def.field));
-    const clean = {};
-    for (const [field, values] of Object.entries(filters || {})) {
-      if (!fields.has(field) || !Array.isArray(values)) continue;
-      const normalized = Array.from(new Set(values.map((value) => String(value)))).filter((value) => value !== "");
-      if (normalized.length) clean[field] = normalized;
-    }
-    return clean;
-  }
-
-  function isTableDateField(field) {
-    return field === "start" || field === "end";
   }
 
   function loadDirectMappingConfig() {
@@ -2407,81 +2377,16 @@
     return [...(node.children || [])].sort(sortNodes);
   }
 
-  function normalizedTableFilterValue(node, field) {
-    const value = tableFieldValue(node, field);
-    if (value instanceof Date) return toGristDateString(value) || "";
-    return String(value ?? "").trim();
-  }
-
-  function tableFilterLabel(value) {
-    return value === "" ? "(vide)" : value;
-  }
-
-  function nodeMatchesTableFilters(node) {
-    const filters = sanitizeTableFilters(tableFilters);
-    for (const [field, selected] of Object.entries(filters)) {
-      if (!selected.length) continue;
-      if (!selected.includes(normalizedTableFilterValue(node, field))) return false;
-    }
-    return true;
-  }
-
-  function dateValueForTableSort(node, field, level) {
-    const config = { kind: field === "end" ? "end" : "start", level: level || node.level };
-    return dateValueForTimelineSort(node, config);
-  }
-
-  function comparableTableValue(node, field) {
-    if (!node || !field) return "";
-    if (isTableDateField(field)) {
-      const d = dateValueForTableSort(node, field, tableSortState.level);
-      return d ? d.getTime() : null;
-    }
-    if (field === "progress") return node.progress == null ? null : Number(node.progress);
-    return normalizedTableFilterValue(node, field).toLocaleLowerCase("fr");
-  }
-
-  function compareNodesForTable(a, b) {
-    const state = sanitizeTableSortState(tableSortState);
-    if (!state.field) return sortNodes(a, b);
-    const av = comparableTableValue(a, state.field);
-    const bv = comparableTableValue(b, state.field);
-    let result = 0;
-    if (av == null && bv != null) result = 1;
-    else if (av != null && bv == null) result = -1;
-    else if (typeof av === "number" && typeof bv === "number") result = av - bv;
-    else result = String(av ?? "").localeCompare(String(bv ?? ""), "fr", { numeric: true, sensitivity: "base" });
-    if (!result) result = sortNodes(a, b);
-    return state.direction === "desc" ? -result : result;
-  }
-
-  function sortedTableChildren(node) {
-    return [...(node.children || [])].sort(compareNodesForTable);
-  }
-
-  function subtreeMatchesTableFilters(node) {
-    if (nodeMatchesTableFilters(node)) return true;
-    return (node.children || []).some(subtreeMatchesTableFilters);
-  }
-
   function visibleTableRows() {
     const rows = [];
-    const hasFilters = Object.keys(sanitizeTableFilters(tableFilters)).length > 0;
-    function walk(node, forceVisible = false) {
-      const selfMatches = nodeMatchesTableFilters(node);
-      const childMatches = (node.children || []).some(subtreeMatchesTableFilters);
-      if (hasFilters && !selfMatches && !childMatches && !forceVisible) return;
+    function walk(node) {
       rows.push(node);
       const expanded = isNodeExpanded(node);
-      for (const child of sortedTableChildren(node)) {
-        if (hasFilters) {
-          if (expanded || hasLinkedSelectionInSubtree(child) || subtreeMatchesTableFilters(child)) walk(child);
-        } else if (expanded || hasLinkedSelectionInSubtree(child)) {
-          walk(child);
-        }
+      for (const child of sortedDefaultChildren(node)) {
+        if (expanded || hasLinkedSelectionInSubtree(child)) walk(child);
       }
     }
-    [...treeRoots].sort(compareNodesForTable).forEach((root) => walk(root));
+    [...treeRoots].sort(sortNodes).forEach((root) => walk(root));
     return rows;
   }
 
@@ -2499,7 +2404,7 @@
     const selected = new Set(tableVisibleFields);
     tableFieldSelect.innerHTML = fields.map((field) => {
       const suffix = field.level ? ` (N${field.level})` : "";
-      return `<label class="field-check"><input type="checkbox" data-table-field-toggle="${escapeHtml(field.field)}" ${selected.has(field.field) ? "checked" : ""}>${escapeHtml(field.label + suffix)}</label>`;
+      return `<option value="${escapeHtml(field.field)}" ${selected.has(field.field) ? "selected" : ""}>${escapeHtml(field.label + suffix)}</option>`;
     }).join("");
   }
 
@@ -2570,55 +2475,18 @@
     return `<input ${baseAttrs} type="text" value="${escapeHtml(raw ?? value ?? "")}" />`;
   }
 
-  function tableFilterOptions(field) {
-    const counts = new Map();
-    for (const node of allRecords) {
-      const value = normalizedTableFilterValue(node, field);
-      counts.set(value, (counts.get(value) || 0) + 1);
-    }
-    return Array.from(counts.entries())
-      .sort((a, b) => tableFilterLabel(a[0]).localeCompare(tableFilterLabel(b[0]), "fr", { numeric: true, sensitivity: "base" }))
-      .map(([value, count]) => ({ value, label: tableFilterLabel(value), count }));
-  }
-
-  function toggleTableSort(field, direction = null, level = null) {
-    const state = sanitizeTableSortState(tableSortState);
-    const nextDirection = direction || (state.field === field && state.direction === "asc" ? "desc" : "asc");
-    tableSortState = sanitizeTableSortState({ field, direction: nextDirection, level: isTableDateField(field) ? level : null });
-    saveState();
-    renderTableView();
-  }
-
-  function renderTableHeaderCell(col) {
-    const state = sanitizeTableSortState(tableSortState);
-    const activeSort = state.field === col.field;
-    const sortLabel = activeSort ? (state.direction === "asc" ? "▲" : "▼") : "↕";
-    const sortTitle = activeSort ? `Tri ${state.direction === "asc" ? "croissant" : "décroissant"}` : "Trier";
-    const mainSort = `<button type="button" class="table-sort-btn ${activeSort ? "active" : ""}" data-table-sort="${escapeHtml(col.field)}" title="${escapeHtml(sortTitle)}">${sortLabel}</button>`;
-    const dateOptions = isTableDateField(col.field) ? `<div class="table-date-sort-options">${[1, 2, 3].map((level) => {
-      const ascActive = activeSort && state.level === level && state.direction === "asc";
-      const descActive = activeSort && state.level === level && state.direction === "desc";
-      return `<button type="button" class="table-date-sort-btn ${ascActive ? "active" : ""}" data-table-date-sort="${escapeHtml(col.field)}" data-table-date-level="${level}" data-table-date-direction="asc" title="Trier ${escapeHtml(col.label)} N${level} croissant">N${level}▲</button><button type="button" class="table-date-sort-btn ${descActive ? "active" : ""}" data-table-date-sort="${escapeHtml(col.field)}" data-table-date-level="${level}" data-table-date-direction="desc" title="Trier ${escapeHtml(col.label)} N${level} décroissant">N${level}▼</button>`;
-    }).join("")}</div>` : "";
-    const filterOptions = isTableDateField(col.field) ? [] : tableFilterOptions(col.field);
-    const selected = new Set(tableFilters[col.field] || []);
-    const hasFilter = selected.size > 0;
-    const filterPanel = isTableDateField(col.field) ? "" : `<div class="table-filter-panel">${filterOptions.length ? filterOptions.map((option) => `<label class="filter-check" title="${escapeHtml(option.label)}"><input type="checkbox" data-table-filter="${escapeHtml(col.field)}" value="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""}>${escapeHtml(option.label)} <span>(${option.count})</span></label>`).join("") : `<span class="table-filter-empty">Aucune valeur</span>`}${hasFilter ? `<button type="button" class="table-filter-clear active" data-table-filter-clear="${escapeHtml(col.field)}">Effacer</button>` : ""}</div>`;
-    return `<th style="width:${col.width}"><div class="table-header-cell"><div class="table-header-main"><span class="table-header-title">${escapeHtml(col.label)}</span>${mainSort}</div>${dateOptions}${filterPanel}</div></th>`;
-  }
-
   function renderTableView() {
     if (!hierarchyTableWrapEl) return;
     const rows = visibleTableRows();
     renderTableFieldSelect();
     if (taskCountEl) taskCountEl.textContent = `${allRecords.length} élément(s)`;
-    const tableFields = visibleTableFieldDefs();
-    const header = tableFields.map(renderTableHeaderCell).join("") + '<th style="width:180px">Actions</th>';
     if (!rows.length) {
-      hierarchyTableWrapEl.innerHTML = `<table class="hierarchy-table"><thead><tr>${header}</tr></thead><tbody><tr><td colspan="${tableFields.length + 1}"><div class="table-empty">Aucun élément ne correspond aux filtres.</div></td></tr></tbody></table>`;
+      hierarchyTableWrapEl.innerHTML = '<div class="table-empty">Aucun élément à afficher.</div>';
       return;
     }
     scheduleTableReferenceRefresh(rows);
+    const tableFields = visibleTableFieldDefs();
+    const header = tableFields.map((col) => `<th style="width:${col.width}">${escapeHtml(col.label)}</th>`).join("") + '<th style="width:180px">Actions</th>';
     const body = rows.map((node) => {
       const color = getColorForNode(node);
       const pad = 10 + (node.level - 1) * 24;
@@ -2779,27 +2647,6 @@
   tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
 
   hierarchyTableWrapEl?.addEventListener("click", async (e) => {
-    const sortBtn = e.target.closest("[data-table-sort]");
-    if (sortBtn) {
-      toggleTableSort(sortBtn.dataset.tableSort);
-      return;
-    }
-
-    const dateSortBtn = e.target.closest("[data-table-date-sort]");
-    if (dateSortBtn) {
-      toggleTableSort(dateSortBtn.dataset.tableDateSort, dateSortBtn.dataset.tableDateDirection, Number(dateSortBtn.dataset.tableDateLevel));
-      return;
-    }
-
-    const clearFilterBtn = e.target.closest("[data-table-filter-clear]");
-    if (clearFilterBtn) {
-      delete tableFilters[clearFilterBtn.dataset.tableFilterClear];
-      tableFilters = sanitizeTableFilters(tableFilters);
-      saveState();
-      renderTableView();
-      return;
-    }
-
     const toggle = e.target.closest("[data-table-toggle]");
     if (toggle) {
       const node = nodeById.get(toggle.dataset.tableToggle);
@@ -2841,20 +2688,6 @@
   });
 
   hierarchyTableWrapEl?.addEventListener("change", async (e) => {
-    const filterInput = e.target.closest("[data-table-filter]");
-    if (filterInput) {
-      const field = filterInput.dataset.tableFilter;
-      const values = new Set(tableFilters[field] || []);
-      if (filterInput.checked) values.add(filterInput.value);
-      else values.delete(filterInput.value);
-      if (values.size) tableFilters[field] = Array.from(values);
-      else delete tableFilters[field];
-      tableFilters = sanitizeTableFilters(tableFilters);
-      saveState();
-      renderTableView();
-      return;
-    }
-
     const input = e.target.closest(".table-cell-editor");
     if (!input) return;
     const node = nodeById.get(input.dataset.nodeId);
@@ -3001,12 +2834,9 @@
   expandAllBtn.addEventListener("click", toggleAllNodes);
   tableExpandAllBtn?.addEventListener("click", toggleAllNodes);
   colorFieldSelect.addEventListener("change", (e) => { colorField = e.target.value; saveState(); render(); });
-  tableFieldSelect?.addEventListener("change", (e) => {
-    if (!e.target.matches("[data-table-field-toggle]")) return;
-    tableVisibleFields = Array.from(tableFieldSelect.querySelectorAll("[data-table-field-toggle]:checked")).map((input) => input.dataset.tableFieldToggle);
+  tableFieldSelect?.addEventListener("change", () => {
+    tableVisibleFields = Array.from(tableFieldSelect.selectedOptions).map((option) => option.value);
     tableVisibleFields = sanitizeTableVisibleFields(tableVisibleFields);
-    tableFilters = sanitizeTableFilters(tableFilters);
-    tableSortState = sanitizeTableSortState(tableSortState);
     saveState();
     if (viewMode === "table") renderTableView();
   });
