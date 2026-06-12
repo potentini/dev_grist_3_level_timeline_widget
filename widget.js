@@ -56,6 +56,7 @@
   let currentTableId = null;
   let currentViewRecords = null;
   let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
+  let selectedNodeId = null;
   let directMappingConfig = loadDirectMappingConfig();
   let directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
   let sourceColumnMetaPromise = null;
@@ -106,6 +107,7 @@
   const tableAddLevel1Btn = document.getElementById("tableAddLevel1Btn");
   const tableExpandAllBtn = document.getElementById("tableExpandAllBtn");
   const tableToggleEditBtn = document.getElementById("tableToggleEditBtn");
+  const tableToolbarActionsEl = document.getElementById("tableToolbarActions");
   const zoomControlsEl = document.querySelector(".zoom-controls");
 
   const dragState = {
@@ -873,7 +875,7 @@
 
       const node = track.node;
       const row = document.createElement("div");
-      row.className = `task-row ${node.children.length ? "parent-row" : "child-row"} level-${node.level}`;
+      row.className = `task-row ${node.children.length ? "parent-row" : "child-row"} level-${node.level}` + (selectedNodeId === node.id ? " selected" : "");
       row.style.paddingLeft = `${8 + (node.level - 1) * 18}px`;
       row.dataset.nodeId = node.id;
       row.dataset.kind = "node";
@@ -888,6 +890,7 @@
         saveState();
         render();
       });
+      row.addEventListener("click", () => selectNodeForLinkedViews(node));
 
       const info = document.createElement("div");
       info.className = "task-info";
@@ -1621,11 +1624,12 @@
         const x = frac * containerWidth;
         const centerY = trackIndex * rowHeight + rowHeight / 2;
         const m = document.createElement("div");
-        m.className = `gantt-milestone level-${node.level}`;
+        m.className = `gantt-milestone level-${node.level}` + (selectedNodeId === node.id ? " selected" : "");
         m.style.left = x.toFixed(1) + "px";
         m.style.top = centerY.toFixed(1) + "px";
         m.style.background = getColorForNode(node);
         m.dataset.nodeId = node.id;
+        m.addEventListener("click", () => selectNodeForLinkedViews(node));
         m.addEventListener("mousemove", (ev) => showTooltip(ev.clientX, ev.clientY, node, node.milestoneDate, node.milestoneDate));
         m.addEventListener("mouseenter", (ev) => showTooltip(ev.clientX, ev.clientY, node, node.milestoneDate, node.milestoneDate));
         m.addEventListener("mouseleave", () => scheduleTooltipHide());
@@ -1651,7 +1655,7 @@
       const leftPx = leftFrac * containerWidth;
       const widthPx = widthFrac * containerWidth;
       const bar = document.createElement("div");
-      bar.className = `gantt-bar level-${node.level}` + (node.children.length ? " parent" : "");
+      bar.className = `gantt-bar level-${node.level}` + (node.children.length ? " parent" : "") + (selectedNodeId === node.id ? " selected" : "");
       bar.style.left = leftPx.toFixed(1) + "px";
       bar.style.width = widthPx.toFixed(1) + "px";
       bar.style.top = trackIndex * rowHeight + 8 + "px";
@@ -1672,6 +1676,7 @@
         label.textContent = node.label;
         bar.appendChild(label);
       }
+      bar.addEventListener("click", () => selectNodeForLinkedViews(node));
       bar.addEventListener("mousemove", (ev) => {
         setBarCursor(bar, ev);
         showTooltip(ev.clientX, ev.clientY, node, s, e);
@@ -2006,7 +2011,44 @@
     });
   }
 
+  function clearNodeSelectionClasses() {
+    document.querySelectorAll(".selected[data-node-id]").forEach((el) => el.classList.remove("selected"));
+  }
 
+  function applyNodeSelectionClasses() {
+    clearNodeSelectionClasses();
+    if (!selectedNodeId) return;
+    document.querySelectorAll(`[data-node-id="${CSS.escape(selectedNodeId)}"]`).forEach((el) => el.classList.add("selected"));
+  }
+
+  function linkedRowIdForNode(node) {
+    const rowId = Number(node?.source?.rowId);
+    if (!Number.isFinite(rowId)) return null;
+    return Math.trunc(rowId);
+  }
+
+  async function selectNodeForLinkedViews(node) {
+    if (!node) return;
+    selectedNodeId = node.id;
+    applyNodeSelectionClasses();
+    const rowId = linkedRowIdForNode(node);
+    if (rowId == null) {
+      setDebugAction(`Sélection locale ${node.source.tableId || "source"}#${node.source.rowId ?? "?"} (hors table liée)`);
+      return;
+    }
+    try {
+      await grist.setSelectedRows([rowId]);
+      await grist.setCursorPos({ rowId, linkingRowIds: [rowId] });
+      setDebugAction(`Sélection liée ${node.source.tableId || currentTableId || "table"}#${rowId}`);
+    } catch (err) {
+      console.warn("Impossible de transmettre la sélection aux vues liées :", err);
+    }
+  }
+
+  function selectNodeByIdForLinkedViews(nodeId) {
+    const node = nodeById.get(nodeId);
+    if (node) selectNodeForLinkedViews(node);
+  }
 
   const TABLE_FIELDS = [
     { field: "name", label: "Élément", width: "30%" },
@@ -2033,6 +2075,7 @@
     timelineOnly.forEach((btn) => { if (btn) btn.hidden = viewMode !== "timeline"; });
     if (zoomControlsEl) zoomControlsEl.hidden = viewMode !== "timeline";
     if (currentPeriodEl) currentPeriodEl.hidden = viewMode !== "timeline";
+    if (tableToolbarActionsEl) tableToolbarActionsEl.hidden = viewMode !== "table";
   }
 
   function visibleTableRows() {
@@ -2134,7 +2177,7 @@
       const action = node.level < 3
         ? `<button type="button" class="btn btn-small row-add-btn" data-add-child="${escapeHtml(node.id)}" ${canAddChild ? "" : "disabled"}>+ Niveau ${node.level + 1}</button>`
         : '<span class="table-cell-readonly">—</span>';
-      return `<tr class="level-${node.level}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${action}</td></tr>`;
+      return `<tr class="level-${node.level}${selectedNodeId === node.id ? " selected" : ""}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${action}</td></tr>`;
     }).join("");
     hierarchyTableWrapEl.innerHTML = `<table class="hierarchy-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
   }
@@ -2254,6 +2297,9 @@
   tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
 
   hierarchyTableWrapEl?.addEventListener("click", async (e) => {
+    const row = e.target.closest("tr[data-node-id]");
+    if (row) selectNodeByIdForLinkedViews(row.dataset.nodeId);
+
     const toggle = e.target.closest("[data-table-toggle]");
     if (toggle) {
       const node = nodeById.get(toggle.dataset.tableToggle);
@@ -2514,7 +2560,7 @@
   updateExpandAllButton();
   updateZoomButtons();
 
-  grist.ready({ requiredAccess: "full" });
+  grist.ready({ requiredAccess: "full", allowSelectBy: true });
 
   grist.onRecords(async function (records) {
     setDebugStatus(`onRecords reçu: ${records ? records.length : 0} ligne(s)`);
