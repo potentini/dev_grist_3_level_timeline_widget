@@ -45,11 +45,11 @@
       .header {
         background: var(--card-bg);
         border-bottom: 1px solid var(--border);
-        padding: 10px 16px;
+        padding: 6px 10px;
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 10px;
+        justify-content: flex-start;
+        gap: 8px;
         flex-wrap: wrap;
       }
 
@@ -124,9 +124,10 @@
 
       .header-actions {
         display: flex;
-        gap: 10px;
+        gap: 6px;
         align-items: center;
         flex-wrap: wrap;
+        order: -1;
       }
 
       .control {
@@ -143,7 +144,7 @@
       }
 
       .control select {
-        padding: 4px 8px;
+        padding: 2px 6px;
         border-radius: 8px;
         border: 1px solid var(--border);
         background: var(--card-bg);
@@ -307,6 +308,12 @@
 
       .task-row:hover { background: var(--bg); }
 
+      .task-row.selected,
+      .task-row.selected:hover {
+        background: #eef2ff;
+        box-shadow: inset 3px 0 0 var(--primary);
+      }
+
       .task-row.parent-row {
         font-weight: 700;
         background: #f9fafb;
@@ -401,6 +408,12 @@
       .gantt-zero-duration:hover {
         transform: translateY(-1px);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      }
+
+      .gantt-bar.selected,
+      .gantt-milestone.selected {
+        outline: 3px solid rgba(79, 70, 229, 0.35);
+        outline-offset: 2px;
       }
 
       .gantt-bar.parent,
@@ -566,44 +579,18 @@
         background: var(--bg);
       }
 
-      .table-toolbar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 10px;
-        padding: 8px 14px;
-        background: var(--card-bg);
-        border-bottom: 1px solid var(--border);
-        box-shadow: var(--shadow);
-      }
-
       .table-toolbar-actions {
         display: flex;
         flex-wrap: wrap;
-        justify-content: flex-end;
         gap: 6px;
-      }
-
-      .table-toolbar-title {
-        display: grid;
-        gap: 2px;
-      }
-
-      .table-toolbar-title strong {
-        font-size: 0.95rem;
-      }
-
-      .table-toolbar-title span {
-        color: var(--text-muted);
-        font-size: 0.75rem;
       }
 
       .table-wrap {
         overflow: auto;
-        margin: 8px 10px;
+        margin: 6px 8px;
         background: var(--card-bg);
         border: 1px solid var(--border);
-        border-radius: 12px;
+        border-radius: 10px;
         box-shadow: var(--shadow);
       }
 
@@ -612,7 +599,8 @@
         min-width: 980px;
         border-collapse: separate;
         border-spacing: 0;
-        font-size: 0.82rem;
+        font-size: 0.78rem;
+        line-height: 1.12;
       }
 
       .hierarchy-table th,
@@ -620,7 +608,7 @@
         border-bottom: 1px solid var(--border);
         border-right: 1px solid #f1f5f9;
         padding: 0;
-        height: 32px;
+        height: 26px;
         vertical-align: middle;
         background: #fff;
       }
@@ -629,7 +617,7 @@
         position: sticky;
         top: 0;
         z-index: 4;
-        padding: 6px 8px;
+        padding: 4px 6px;
         background: #f8fafc;
         color: #475569;
         text-align: left;
@@ -641,12 +629,19 @@
       .hierarchy-table tr:hover td { background: #fafbff; }
       .hierarchy-table tr.level-1 td { background: #fbfdff; }
       .hierarchy-table tr.level-1:hover td { background: #f5f7ff; }
+      .hierarchy-table tr.selected td,
+      .hierarchy-table tr.selected:hover td {
+        background: #eef2ff;
+      }
+      .hierarchy-table tr.selected td:first-child {
+        box-shadow: inset 3px 0 0 var(--primary);
+      }
 
       .table-name-cell {
         display: flex;
         align-items: center;
-        gap: 6px;
-        padding: 3px 8px;
+        gap: 4px;
+        padding: 1px 6px;
         min-width: 260px;
       }
 
@@ -668,7 +663,7 @@
 
       .level-pill {
         width: 7px;
-        height: 22px;
+        height: 18px;
         border-radius: 999px;
         flex: 0 0 auto;
       }
@@ -677,7 +672,7 @@
         border: none;
         background: transparent;
         width: 18px;
-        height: 22px;
+        height: 18px;
         cursor: pointer;
         color: var(--text-muted);
         font-weight: 800;
@@ -699,10 +694,10 @@
       .table-cell-editor {
         width: 100%;
         min-width: 0;
-        height: 31px;
+        height: 25px;
         border: 0;
         outline: none;
-        padding: 4px 8px;
+        padding: 2px 6px;
         background: transparent;
         color: var(--text);
         font: inherit;
@@ -721,12 +716,12 @@
 
       .table-cell-readonly {
         display: block;
-        padding: 6px 8px;
-        min-height: 31px;
+        padding: 4px 6px;
+        min-height: 25px;
       }
 
       .table-actions-cell {
-        padding: 3px 8px !important;
+        padding: 1px 6px !important;
         white-space: nowrap;
       }
 
@@ -958,14 +953,20 @@
       </div>
 
       <div class="header-actions">
-        <div class="control">
-          <label for="colorFieldSelect">Couleur par</label>
-          <select id="colorFieldSelect"></select>
-        </div>
-
         <div class="view-toggle" aria-label="Choix de vue">
           <button class="btn btn-small active" id="timelineViewBtn" type="button">Timeline</button>
           <button class="btn btn-small" id="tableViewBtn" type="button">Table</button>
+        </div>
+
+        <div class="table-toolbar-actions" id="tableToolbarActions" hidden>
+          <button class="btn btn-small active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
+          <button class="btn btn-small" id="tableExpandAllBtn" type="button">Tout déplier</button>
+          <button class="btn btn-small" id="tableToggleEditBtn" type="button">Édition bloquée</button>
+        </div>
+
+        <div class="control">
+          <label for="colorFieldSelect">Couleur par</label>
+          <select id="colorFieldSelect"></select>
         </div>
 
         <button class="btn btn-small" id="addLevel1Btn" type="button" hidden>+ Niveau 1</button>
@@ -1028,17 +1029,6 @@
     </div>
 
     <div class="table-view" id="tableView" hidden>
-      <div class="table-toolbar">
-        <div class="table-toolbar-title">
-          <strong>Table hiérarchique</strong>
-          <span id="tableHint">Modifiez directement les cellules ; les valeurs sont synchronisées dans les tables sources.</span>
-        </div>
-        <div class="table-toolbar-actions">
-          <button class="btn btn-small active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
-          <button class="btn btn-small" id="tableExpandAllBtn" type="button">Tout déplier</button>
-          <button class="btn btn-small" id="tableToggleEditBtn" type="button">Édition bloquée</button>
-        </div>
-      </div>
       <div class="table-wrap" id="hierarchyTableWrap">
         <div class="table-empty">En attente du mapping interne…</div>
       </div>
