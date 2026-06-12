@@ -1108,6 +1108,54 @@
     return null;
   }
 
+  function constrainedDirectTree(roots, nodes, levelNodes) {
+    const constrainedNodeIds = new Set();
+    let hasConstrainedLevel = false;
+    for (const current of levelNodes.values()) {
+      if (!current.isConstrained) continue;
+      hasConstrainedLevel = true;
+      for (const node of current.byRowId.values()) constrainedNodeIds.add(node.id);
+    }
+    if (!hasConstrainedLevel) return { roots, nodes };
+    if (!constrainedNodeIds.size) return { roots: [], nodes: new Map() };
+
+    const visibleIds = new Set();
+    const descendantVisits = new Set();
+    function includeAncestors(node) {
+      let current = node;
+      while (current) {
+        visibleIds.add(current.id);
+        current = current.parentId ? nodes.get(current.parentId) : null;
+      }
+    }
+    function includeDescendants(node) {
+      if (!node || descendantVisits.has(node.id)) return;
+      descendantVisits.add(node.id);
+      visibleIds.add(node.id);
+      node.children.forEach(includeDescendants);
+    }
+
+    for (const nodeId of constrainedNodeIds) {
+      const node = nodes.get(nodeId);
+      if (!node) continue;
+      includeAncestors(node);
+      includeDescendants(node);
+    }
+
+    function prune(node) {
+      if (!visibleIds.has(node.id)) return null;
+      node.children = node.children.map(prune).filter(Boolean);
+      return node;
+    }
+
+    const prunedRoots = roots.map(prune).filter(Boolean);
+    const prunedNodes = new Map();
+    for (const [id, node] of nodes.entries()) {
+      if (visibleIds.has(id)) prunedNodes.set(id, node);
+    }
+    return { roots: prunedRoots, nodes: prunedNodes };
+  }
+
   async function buildDirectMultitableRecords() {
     await loadSourceColumnMetadata();
     const nodes = new Map();
@@ -1176,10 +1224,14 @@
       return node;
     }
 
-    roots.sort(sortNodes).forEach(finalize);
-    nodeById = nodes;
-    allRecords = Array.from(nodes.values());
-    treeRoots = roots;
+    const constrained = constrainedDirectTree(roots, nodes, levelNodes);
+    const visibleRoots = constrained.roots;
+    const visibleNodes = constrained.nodes;
+
+    visibleRoots.sort(sortNodes).forEach(finalize);
+    nodeById = visibleNodes;
+    allRecords = Array.from(visibleNodes.values());
+    treeRoots = visibleRoots;
     return allRecords;
   }
 
