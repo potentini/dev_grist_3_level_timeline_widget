@@ -1133,13 +1133,19 @@
     const sourceRows = rowsFromGristTable(await grist.docApi.fetchTable(cfg.tableId));
     if (!isDirectLevelDrivenByCurrentView(cfg)) return { rows: sourceRows, isConstrained: false };
 
-    const visibleRowIds = new Set(currentViewRecords.map(rowIdFromGristRow).filter((rowId) => rowId != null));
-    if (!visibleRowIds.size) return { rows: [], isConstrained: true };
+    const sourceRowsById = new Map();
+    for (const row of sourceRows) {
+      const rowId = rowIdFromGristRow(row);
+      if (rowId != null) sourceRowsById.set(rowId, row);
+    }
 
-    return {
-      rows: sourceRows.filter((row) => visibleRowIds.has(rowIdFromGristRow(row))),
-      isConstrained: true
-    };
+    const visibleRows = currentViewRecords
+      .map(rowIdFromGristRow)
+      .filter((rowId) => rowId != null)
+      .map((rowId) => sourceRowsById.get(rowId))
+      .filter(Boolean);
+
+    return { rows: visibleRows, isConstrained: true };
   }
 
   function constrainedDirectTree(roots, nodes, levelNodes) {
