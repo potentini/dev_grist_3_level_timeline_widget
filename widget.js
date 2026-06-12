@@ -53,6 +53,7 @@
   let compactChildren = false;
   let allowEditing = false;
   let currentTableId = null;
+  let currentViewRecords = null;
   let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
   let directMappingConfig = loadDirectMappingConfig();
   let directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
@@ -1098,17 +1099,28 @@
     return node;
   }
 
+  function isDirectLevelDrivenByCurrentView(cfg) {
+    return !!(cfg?.tableId && currentTableId && cfg.tableId === currentTableId && Array.isArray(currentViewRecords));
+  }
+
+  function directRowsForLevel(cfg) {
+    if (isDirectLevelDrivenByCurrentView(cfg)) return currentViewRecords;
+    return null;
+  }
+
   async function buildDirectMultitableRecords() {
     await loadSourceColumnMetadata();
     const nodes = new Map();
     const levelNodes = new Map();
+    const constrainedLevels = new Set();
     let sourceIndex = 0;
 
     for (const levelInfo of LEVELS) {
       const cfg = directMappingConfig.levels[levelInfo.level];
       if (!cfg?.tableId || !cfg.nameCol) continue;
-      const rawTable = await grist.docApi.fetchTable(cfg.tableId);
-      const rows = rowsFromGristTable(rawTable);
+      const viewRows = directRowsForLevel(cfg);
+      const rows = viewRows || rowsFromGristTable(await grist.docApi.fetchTable(cfg.tableId));
+      if (viewRows) constrainedLevels.add(levelInfo.level);
       const byRowId = new Map();
       for (const row of rows) {
         const node = directNodeFromRow(row, levelInfo.level, cfg, sourceIndex++);
@@ -1116,9 +1128,11 @@
         nodes.set(node.id, node);
         byRowId.set(node.source.rowId, node);
       }
-      levelNodes.set(levelInfo.level, { rows, byRowId, cfg });
+      levelNodes.set(levelInfo.level, { rows, byRowId, cfg, isConstrained: !!viewRows });
     }
 
+    const hasConstrainedLevel = constrainedLevels.size > 0;
+    const minConstrainedLevel = hasConstrainedLevel ? Math.min(...constrainedLevels) : null;
     const roots = [];
     for (const levelInfo of LEVELS) {
       const level = levelInfo.level;
@@ -1138,7 +1152,7 @@
         if (parentNode) {
           node.parentId = parentNode.id;
           parentNode.children.push(node);
-        } else {
+        } else if (!hasConstrainedLevel || level <= minConstrainedLevel || !parent) {
           roots.push(node);
         }
       }
@@ -2133,6 +2147,7 @@
 
   grist.onRecords(async function (records) {
     setDebugStatus(`onRecords reçu: ${records ? records.length : 0} ligne(s)`);
+    currentViewRecords = Array.isArray(records) ? records : [];
     try {
       currentTableId = await grist.selectedTable.getTableId();
     } catch (e) {
