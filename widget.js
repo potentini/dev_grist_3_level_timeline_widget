@@ -129,6 +129,8 @@
   const tableToggleEditBtn = document.getElementById("tableToggleEditBtn");
   const timelineDateSortSelect = document.getElementById("timelineDateSortSelect");
   const tableToolbarActionsEl = document.getElementById("tableToolbarActions");
+  const tableFieldPickerEl = document.getElementById("tableFieldPicker");
+  const tableFieldSelectBtn = document.getElementById("tableFieldSelectBtn");
   const tableFieldSelect = document.getElementById("tableFieldSelect");
   const zoomControlsEl = document.querySelector(".zoom-controls");
 
@@ -2402,10 +2404,13 @@
     const fields = allTableFieldDefs();
     tableVisibleFields = sanitizeTableVisibleFields(tableVisibleFields);
     const selected = new Set(tableVisibleFields);
-    tableFieldSelect.innerHTML = fields.map((field) => {
+    const options = fields.map((field) => {
       const suffix = field.level ? ` (N${field.level})` : "";
-      return `<option value="${escapeHtml(field.field)}" ${selected.has(field.field) ? "selected" : ""}>${escapeHtml(field.label + suffix)}</option>`;
+      const checked = selected.has(field.field) ? "checked" : "";
+      return `<label class="table-field-option" role="menuitemcheckbox" aria-checked="${checked ? "true" : "false"}"><input type="checkbox" value="${escapeHtml(field.field)}" ${checked}>${escapeHtml(field.label + suffix)}</label>`;
     }).join("");
+    tableFieldSelect.innerHTML = `<div class="table-field-option disabled" aria-disabled="true">Choix</div>${options}`;
+    if (tableFieldSelectBtn) tableFieldSelectBtn.textContent = "Choix";
   }
 
   function visibleTableFieldDefs() {
@@ -2884,11 +2889,25 @@
   expandAllBtn.addEventListener("click", toggleAllNodes);
   tableExpandAllBtn?.addEventListener("click", toggleAllNodes);
   colorFieldSelect.addEventListener("change", (e) => { colorField = e.target.value; saveState(); render(); });
+  tableFieldSelectBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = tableFieldSelectBtn.getAttribute("aria-expanded") === "true";
+    tableFieldSelectBtn.setAttribute("aria-expanded", String(!isOpen));
+    if (tableFieldSelect) tableFieldSelect.hidden = isOpen;
+    tableFieldPickerEl?.classList.toggle("open", !isOpen);
+  });
+  tableFieldSelect?.addEventListener("click", (e) => e.stopPropagation());
   tableFieldSelect?.addEventListener("change", () => {
-    tableVisibleFields = Array.from(tableFieldSelect.selectedOptions).map((option) => option.value);
+    tableVisibleFields = Array.from(tableFieldSelect.querySelectorAll('input[type="checkbox"]:checked')).map((option) => option.value);
     tableVisibleFields = sanitizeTableVisibleFields(tableVisibleFields);
     saveState();
     if (viewMode === "table") renderTableView();
+  });
+  document.addEventListener("click", (e) => {
+    if (tableFieldPickerEl?.contains(e.target)) return;
+    if (tableFieldSelectBtn) tableFieldSelectBtn.setAttribute("aria-expanded", "false");
+    if (tableFieldSelect) tableFieldSelect.hidden = true;
+    tableFieldPickerEl?.classList.remove("open");
   });
   window.addEventListener("resize", () => {
     if (!allRecords.length) return;
