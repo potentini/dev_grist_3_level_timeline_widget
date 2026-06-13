@@ -18,6 +18,7 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 - Coloration configurable par niveau, nom, statut, responsable, avancement, table source ou dates.
 - Infobulles compactes au survol dans la timeline : champs essentiels sans détail de type de colonne ni liste de choix.
 - Ajout depuis la vue table : bouton global pour créer un niveau 1, boutons `+` sur les lignes de niveau 1 pour créer un niveau 2 rattaché, et boutons `+` sur les lignes de niveau 2 pour créer un niveau 3 rattaché.
+- Filtres déroulants en vue `Table` sur les en-têtes des colonnes non-date, hors `Avancement` et `Actions`, avec sélection multiple des valeurs possibles.
 - Bouton global `Édition bloquée/autorisée` : quand il est activé, l’édition des dates par glisser-déposer et l’édition depuis l’infobulle sont autorisées ; quand il est désactivé, aucune édition n’est possible.
 - Routage d’écriture vers les tables sources via `grist.docApi.applyUserActions`.
 - Persistance de la vue active `Timeline` ou `Table` dans les options Grist propres à chaque widget inséré, avec repli `localStorage` pour les autres préférences UI locales.
