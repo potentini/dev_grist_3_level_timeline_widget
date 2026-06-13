@@ -73,6 +73,8 @@
   let viewMode = "timeline";
   let timelineSortField = "default";
   let tableVisibleFields = [...TABLE_DEFAULT_VISIBLE_FIELDS];
+  let tableColumnFilters = {};
+  let openTableFilterField = null;
   let currentTableId = null;
   let currentViewRecords = null;
   let latestWriteSummary = "docApi.applyUserActions (mapping interne)";
@@ -171,6 +173,7 @@
       selectedViewMode: viewMode,
       timelineSortField,
       tableVisibleFields,
+      tableColumnFilters,
       expandedNodes,
       visibleStart: visibleStart ? toGristDateString(visibleStart) : null,
       visibleEnd: visibleEnd ? toGristDateString(visibleEnd) : null
@@ -191,6 +194,7 @@
     const savedTimelineSortField = s.timelineSortField || s.tableSortField;
     if (isValidDateSortField(savedTimelineSortField)) timelineSortField = savedTimelineSortField;
     if (Array.isArray(s.tableVisibleFields)) tableVisibleFields = sanitizeTableVisibleFields(s.tableVisibleFields);
+    if (s.tableColumnFilters && typeof s.tableColumnFilters === "object") tableColumnFilters = sanitizeTableColumnFilters(s.tableColumnFilters);
     if (s.expandedNodes && typeof s.expandedNodes === "object") expandedNodes = s.expandedNodes;
     if (s.visibleStart) visibleStart = normalizeDate(s.visibleStart);
     if (s.visibleEnd) visibleEnd = normalizeDate(s.visibleEnd);
@@ -321,6 +325,32 @@
     const available = allTableFieldDefs().map((def) => def.field);
     const selected = fields.filter((field) => available.includes(field));
     return selected.length ? selected : [...TABLE_DEFAULT_VISIBLE_FIELDS].filter((field) => available.includes(field));
+  }
+
+  function isTableFilterableField(field) {
+    return field !== "start" && field !== "end" && field !== "progress";
+  }
+
+  function sanitizeTableColumnFilters(filters = tableColumnFilters) {
+    const available = new Set(allTableFieldDefs().map((def) => def.field).filter(isTableFilterableField));
+    const normalized = {};
+    for (const [field, values] of Object.entries(filters || {})) {
+      if (!available.has(field) || !Array.isArray(values)) continue;
+      const cleanValues = Array.from(new Set(values.map((value) => String(value))));
+      if (cleanValues.length) normalized[field] = cleanValues;
+    }
+    return normalized;
+  }
+
+  function hasActiveTableFilters() {
+    return Object.values(tableColumnFilters || {}).some((values) => Array.isArray(values) && values.length);
+  }
+
+  function pruneHiddenTableFilters() {
+    const visible = new Set(tableVisibleFields);
+    for (const field of Object.keys(tableColumnFilters || {})) {
+      if (!visible.has(field)) delete tableColumnFilters[field];
+    }
   }
 
   function loadDirectMappingConfig() {
@@ -2379,11 +2409,37 @@
     return [...(node.children || [])].sort(sortNodes);
   }
 
+  function tableFilterValue(node, field) {
+    const value = tableFieldValue(node, field);
+    if (field === "progress" && value !== "") return `${value}%`;
+    if (field === "start" || field === "end") return formatDate(value);
+    return String(value || "").trim();
+  }
+
+  function nodeMatchesTableFilters(node) {
+    const filters = sanitizeTableColumnFilters(tableColumnFilters);
+    for (const [field, selectedValues] of Object.entries(filters)) {
+      if (!selectedValues.length) continue;
+      const value = tableFilterValue(node, field);
+      if (!selectedValues.includes(value)) return false;
+    }
+    return true;
+  }
+
+  function subtreeMatchesTableFilters(node) {
+    if (nodeMatchesTableFilters(node)) return true;
+    return (node.children || []).some(subtreeMatchesTableFilters);
+  }
+
   function visibleTableRows() {
     const rows = [];
+    const filtered = hasActiveTableFilters();
     function walk(node) {
+      const matchesSelf = !filtered || nodeMatchesTableFilters(node);
+      const matchesSubtree = !filtered || matchesSelf || (node.children || []).some(subtreeMatchesTableFilters);
+      if (!matchesSubtree) return;
       rows.push(node);
-      const expanded = isNodeExpanded(node);
+      const expanded = filtered || isNodeExpanded(node);
       for (const child of sortedDefaultChildren(node)) {
         if (expanded || hasLinkedSelectionInSubtree(child)) walk(child);
       }
@@ -2411,6 +2467,50 @@
     }).join("");
     tableFieldSelect.innerHTML = `<div class="table-field-option disabled" aria-disabled="true">Choix</div>${options}`;
     if (tableFieldSelectBtn) tableFieldSelectBtn.textContent = "Choix";
+  }
+
+  function tableFilterOptions(field) {
+    const values = new Map();
+    for (const node of allRecords) {
+      const value = tableFilterValue(node, field);
+      values.set(value, (values.get(value) || 0) + 1);
+    }
+    return Array.from(values.entries())
+      .map(([value, count]) => ({ value, label: value || "—", count }))
+      .sort((a, b) => {
+        if (!a.value && b.value) return 1;
+        if (a.value && !b.value) return -1;
+        return a.label.localeCompare(b.label, "fr", { numeric: true, sensitivity: "base" });
+      });
+  }
+
+  function renderTableHeaderFilter(col) {
+    if (!isTableFilterableField(col.field)) return "";
+    const options = tableFilterOptions(col.field);
+    if (!options.length) return "";
+    const selected = new Set(tableColumnFilters[col.field] || []);
+    const isOpen = openTableFilterField === col.field;
+    const active = selected.size > 0;
+    const optionHtml = options.map((option) => {
+      const checked = selected.has(option.value) ? "checked" : "";
+      const count = option.count > 1 ? ` <small>(${option.count})</small>` : "";
+      return `<label class="table-filter-option" role="menuitemcheckbox" aria-checked="${checked ? "true" : "false"}"><input type="checkbox" value="${escapeHtml(option.value)}" ${checked}>${escapeHtml(option.label)}${count}</label>`;
+    }).join("");
+    return `
+      <div class="table-column-filter ${isOpen ? "open" : ""}" data-table-filter-menu="${escapeHtml(col.field)}">
+        <button type="button" class="table-filter-button ${active ? "active" : ""}" data-table-filter-toggle="${escapeHtml(col.field)}" aria-haspopup="true" aria-expanded="${isOpen ? "true" : "false"}" title="Filtrer ${escapeHtml(col.label)}">${active ? selected.size : ""}</button>
+        <div class="table-filter-options" ${isOpen ? "" : "hidden"} role="menu">
+          <div class="table-filter-actions">
+            <button type="button" class="table-filter-action" data-table-filter-all="${escapeHtml(col.field)}">Tout</button>
+            <button type="button" class="table-filter-action" data-table-filter-clear="${escapeHtml(col.field)}">Effacer</button>
+          </div>
+          ${optionHtml}
+        </div>
+      </div>`;
+  }
+
+  function renderTableHeaderCell(col) {
+    return `<th style="width:${col.width}"><div class="table-header-cell"><span>${escapeHtml(col.label)}</span>${renderTableHeaderFilter(col)}</div></th>`;
   }
 
   function visibleTableFieldDefs() {
@@ -2490,8 +2590,9 @@
       return;
     }
     scheduleTableReferenceRefresh(rows);
+    tableColumnFilters = sanitizeTableColumnFilters(tableColumnFilters);
     const tableFields = visibleTableFieldDefs();
-    const header = tableFields.map((col) => `<th style="width:${col.width}">${escapeHtml(col.label)}</th>`).join("") + '<th style="width:180px">Actions</th>';
+    const header = tableFields.map(renderTableHeaderCell).join("") + '<th style="width:180px">Actions</th>';
     const body = rows.map((node) => {
       const color = getColorForNode(node);
       const pad = 10 + (node.level - 1) * 24;
@@ -2649,6 +2750,40 @@
     tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
 
     hierarchyTableWrapEl?.addEventListener("click", async (e) => {
+      const filterToggle = e.target.closest("[data-table-filter-toggle]");
+      if (filterToggle) {
+        e.stopPropagation();
+        const field = filterToggle.dataset.tableFilterToggle;
+        openTableFilterField = openTableFilterField === field ? null : field;
+        renderTableView();
+        return;
+      }
+
+      const filterAll = e.target.closest("[data-table-filter-all]");
+      if (filterAll) {
+        e.stopPropagation();
+        delete tableColumnFilters[filterAll.dataset.tableFilterAll];
+        saveState();
+        renderTableView();
+        return;
+      }
+
+      const filterClear = e.target.closest("[data-table-filter-clear]");
+      if (filterClear) {
+        e.stopPropagation();
+        delete tableColumnFilters[filterClear.dataset.tableFilterClear];
+        saveState();
+        renderTableView();
+        return;
+      }
+
+      if (e.target.closest("[data-table-filter-menu]")) {
+        e.stopPropagation();
+        return;
+      }
+
+      openTableFilterField = null;
+
       const toggle = e.target.closest("[data-table-toggle]");
       if (toggle) {
         const node = nodeById.get(toggle.dataset.tableToggle);
@@ -2690,6 +2825,21 @@
     });
 
     hierarchyTableWrapEl?.addEventListener("change", async (e) => {
+      const filterInput = e.target.closest('[data-table-filter-menu] input[type="checkbox"]');
+      if (filterInput) {
+        const menu = filterInput.closest("[data-table-filter-menu]");
+        const field = menu?.dataset.tableFilterMenu;
+        if (!field) return;
+        const selected = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map((option) => option.value);
+        if (selected.length) tableColumnFilters[field] = selected;
+        else delete tableColumnFilters[field];
+        tableColumnFilters = sanitizeTableColumnFilters(tableColumnFilters);
+        openTableFilterField = field;
+        saveState();
+        renderTableView();
+        return;
+      }
+
       const input = e.target.closest(".table-cell-editor");
       if (!input) return;
       const node = nodeById.get(input.dataset.nodeId);
@@ -2900,10 +3050,15 @@
   tableFieldSelect?.addEventListener("change", () => {
     tableVisibleFields = Array.from(tableFieldSelect.querySelectorAll('input[type="checkbox"]:checked')).map((option) => option.value);
     tableVisibleFields = sanitizeTableVisibleFields(tableVisibleFields);
+    pruneHiddenTableFilters();
     saveState();
     if (viewMode === "table") renderTableView();
   });
   document.addEventListener("click", (e) => {
+    if (!hierarchyTableWrapEl?.contains(e.target)) {
+      openTableFilterField = null;
+      if (viewMode === "table" && hierarchyTableWrapEl?.querySelector(".table-column-filter.open")) renderTableView();
+    }
     if (tableFieldPickerEl?.contains(e.target)) return;
     if (tableFieldSelectBtn) tableFieldSelectBtn.setAttribute("aria-expanded", "false");
     if (tableFieldSelect) tableFieldSelect.hidden = true;
