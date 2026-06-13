@@ -21,7 +21,7 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 - Filtres déroulants en vue `Table` sur les en-têtes des colonnes non-date, hors `Avancement` et `Actions`, avec sélection multiple des valeurs possibles.
 - Bouton global `Édition bloquée/autorisée` : quand il est activé, l’édition des dates par glisser-déposer et l’édition depuis l’infobulle sont autorisées ; quand il est désactivé, aucune édition n’est possible.
 - Routage d’écriture vers les tables sources via `grist.docApi.applyUserActions`.
-- Persistance de la vue active `Timeline` ou `Table` dans les options Grist propres à chaque widget inséré, avec repli `localStorage` pour les autres préférences UI locales.
+- Persistance de la vue active `Timeline` ou `Table` et du mapping interne multitable dans les options Grist propres à chaque widget inséré, avec repli `localStorage` pour les autres préférences UI locales.
 
 ## Structure du projet
 
@@ -41,7 +41,7 @@ Quand une table est choisie, les champs essentiels sont automatiquement préremp
 
 Dès qu’une table est choisie dans ce panneau, le widget utilise `grist.docApi.fetchTable` pour lire les vraies tables sources. Les écritures depuis l’infobulle ou le glisser-déposer utilisent ensuite `UpdateRecord` sur la table et la ligne source connues.
 
-Le mapping interne est sauvegardé localement dans le navigateur sous la clé `grist_gantt_direct_multitable_mapping_v1`.
+Le mapping interne est sauvegardé en priorité dans l’option Grist `directMapping` propre à l’instance du widget, tout en conservant un repli local dans le navigateur sous la clé `grist_gantt_direct_multitable_mapping_v1`. À l’ouverture, le widget lit d’abord les options Grist ; si un ancien mapping n’existe que dans `localStorage`, il est automatiquement copié dans les options Grist au chargement suivant.
 
 ## Écriture vers les tables sources
 
@@ -69,7 +69,7 @@ Quand un champ devient éditable dans l’infobulle, le widget lit les métadonn
 - Le widget utilise un modèle de dates normalisées au jour.
 - Les modes de zoom sont définis dans `ZOOMS`.
 - Les niveaux sont définis dans `LEVELS`.
-- Le mapping interne multitable est stocké sous la clé `grist_gantt_direct_multitable_mapping_v1`.
+- Le mapping interne multitable est stocké dans l’option Grist `directMapping` et synchronisé en repli sous la clé `grist_gantt_direct_multitable_mapping_v1`.
 - L’état utilisateur local est stocké sous la clé `grist_gantt_multilevel_state_v1`, tandis que la vue active est aussi stockée dans l’option Grist `uiState` propre à chaque instance du widget.
 
 ## Limites connues

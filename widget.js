@@ -36,6 +36,7 @@
 
   const STORAGE_KEY = "grist_gantt_multilevel_state_v1";
   const WIDGET_STATE_OPTION_KEY = "uiState";
+  const DIRECT_MAPPING_OPTION_KEY = "directMapping";
   const DIRECT_MAPPING_STORAGE_KEY = "grist_gantt_direct_multitable_mapping_v1";
   const DIRECT_FIELDS = ["name", "start", "end", "status", "responsible", "progress"];
   const DIRECT_FIELD_AUTOMAP_LABELS = {
@@ -353,21 +354,37 @@
     }
   }
 
-  function loadDirectMappingConfig() {
+  function loadDirectMappingConfigFromLocalStorage() {
     try {
-      return normalizeDirectMappingConfig(JSON.parse(window.localStorage.getItem(DIRECT_MAPPING_STORAGE_KEY) || "{}"));
+      const raw = window.localStorage.getItem(DIRECT_MAPPING_STORAGE_KEY);
+      return raw ? normalizeDirectMappingConfig(JSON.parse(raw)) : normalizeDirectMappingConfig({});
     } catch (e) {
-      console.warn("Impossible de charger le mapping interne multitable :", e);
+      console.warn("Impossible de charger le mapping interne multitable depuis localStorage :", e);
       return normalizeDirectMappingConfig({});
     }
   }
 
-  function saveDirectMappingConfig() {
+  function loadDirectMappingConfig() {
+    return loadDirectMappingConfigFromLocalStorage();
+  }
+
+  function saveDirectMappingConfigToLocalStorage(config = directMappingConfig) {
     try {
-      window.localStorage.setItem(DIRECT_MAPPING_STORAGE_KEY, JSON.stringify(directMappingConfig));
+      window.localStorage.setItem(DIRECT_MAPPING_STORAGE_KEY, JSON.stringify(config));
     } catch (e) {
-      console.warn("Impossible de sauvegarder le mapping interne multitable :", e);
+      console.warn("Impossible de sauvegarder le mapping interne multitable dans localStorage :", e);
     }
+  }
+
+  function saveDirectMappingConfigOption(config = directMappingConfig) {
+    if (!window.grist || typeof grist.setOption !== "function") return;
+    grist.setOption(DIRECT_MAPPING_OPTION_KEY, config)
+      .catch((e) => console.warn("Impossible de sauvegarder le mapping interne dans les options Grist :", e));
+  }
+
+  function saveDirectMappingConfig() {
+    saveDirectMappingConfigToLocalStorage(directMappingConfig);
+    saveDirectMappingConfigOption(directMappingConfig);
   }
 
   function hasDirectMappingConfig(config) {
@@ -3231,14 +3248,32 @@
 
   grist.onOptions(function (options) {
     const widgetState = options?.[WIDGET_STATE_OPTION_KEY];
-    if (!widgetState) return;
-    applyState(widgetState, { includeViewMode: true });
-    try {
-      saveStateToLocalStorage(serializedState());
-    } catch (e) {
-      console.warn("Impossible de synchroniser l’état local depuis les options Grist :", e);
+    const optionMapping = options?.[DIRECT_MAPPING_OPTION_KEY];
+    let shouldRender = false;
+
+    if (optionMapping) {
+      directMappingConfig = normalizeDirectMappingConfig(optionMapping);
+      directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
+      saveDirectMappingConfigToLocalStorage(directMappingConfig);
+      renderDirectMappingPanel();
+      shouldRender = true;
+    } else if (hasDirectMappingConfig(directMappingConfig)) {
+      // Migration automatique : si le mapping n'existe encore que dans localStorage,
+      // on le copie dans les options propres à cette instance de widget Grist.
+      saveDirectMappingConfigOption(directMappingConfig);
     }
-    render();
+
+    if (widgetState) {
+      applyState(widgetState, { includeViewMode: true });
+      try {
+        saveStateToLocalStorage(serializedState());
+      } catch (e) {
+        console.warn("Impossible de synchroniser l’état local depuis les options Grist :", e);
+      }
+      shouldRender = true;
+    }
+
+    if (shouldRender) render();
   });
 
   grist.onRecords(async function (records) {
