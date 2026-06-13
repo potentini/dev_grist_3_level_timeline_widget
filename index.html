@@ -151,13 +151,82 @@
         white-space: nowrap;
       }
 
-      .control select {
+      .control select,
+      .select-like-button {
         padding: 2px 6px;
         border-radius: 8px;
         border: 1px solid var(--border);
         background: var(--card-bg);
         font-size: 0.78rem;
         cursor: pointer;
+      }
+
+      .table-field-picker {
+        position: relative;
+      }
+
+      .table-field-picker .select-like-button {
+        min-width: 95px;
+        display: inline-flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        color: var(--text);
+      }
+
+      .table-field-picker .select-like-button::after {
+        content: "▾";
+        font-size: 0.68rem;
+        color: var(--text-muted);
+      }
+
+      .table-field-picker.open .select-like-button::after {
+        content: "▴";
+      }
+
+      .table-field-options {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 1200;
+        min-width: 190px;
+        max-height: 260px;
+        overflow: auto;
+        padding: 4px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--card-bg);
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.16);
+      }
+
+      .table-field-option {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        padding: 5px 7px;
+        border-radius: 7px;
+        color: var(--text);
+        font-size: 0.78rem;
+        white-space: nowrap;
+      }
+
+      .table-field-option:not(.disabled) {
+        cursor: pointer;
+      }
+
+      .table-field-option:not(.disabled):hover {
+        background: var(--bg);
+      }
+
+      .table-field-option.disabled {
+        color: var(--text-muted);
+        font-weight: 700;
+        cursor: default;
+      }
+
+      .table-field-option input {
+        margin: 0;
       }
 
       .btn {
@@ -1006,9 +1075,10 @@
           <button class="btn btn-small active" id="tableAddLevel1Btn" type="button">+ Ajouter un niveau 1</button>
           <button class="btn btn-small" id="tableExpandAllBtn" type="button">Tout déplier</button>
           <button class="btn btn-small" id="tableToggleEditBtn" type="button">Édition bloquée</button>
-          <div class="control">
-            <label for="tableFieldSelect">Champs table</label>
-            <select id="tableFieldSelect" multiple size="3"></select>
+          <div class="control table-field-picker" id="tableFieldPicker">
+            <label for="tableFieldSelectBtn">Champs table</label>
+            <button class="select-like-button" id="tableFieldSelectBtn" type="button" aria-haspopup="true" aria-expanded="false">Choix</button>
+            <div class="table-field-options" id="tableFieldSelect" role="menu" hidden></div>
           </div>
         </div>
 
