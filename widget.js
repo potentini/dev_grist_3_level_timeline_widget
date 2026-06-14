@@ -86,6 +86,9 @@
   const sourceColumnMetaCache = new Map();
   const tableMetaCache = new Map();
   const refOptionsCache = new Map();
+  const sourceTableRowsCache = new Map();
+  let directHierarchyDirty = true;
+  let directHierarchyConstraintSignature = null;
   const tooltipState = { nodeId: null, editingField: null, draftValue: null, forceRefresh: false };
   let tooltipHideTimer = null;
 
@@ -449,6 +452,7 @@
   }
 
   function saveDirectMappingConfig() {
+    clearAllSourceTableRowsCache("configuration du mapping");
     saveDirectMappingConfigToLocalStorage(directMappingConfig);
     saveDirectMappingConfigOption(directMappingConfig);
   }
@@ -1417,8 +1421,51 @@
     return !!(cfg?.tableId && currentTableId && cfg.tableId === currentTableId && Array.isArray(currentViewRecords));
   }
 
+  function currentViewRowIdSignature() {
+    if (!Array.isArray(currentViewRecords)) return "";
+    return currentViewRecords
+      .map(rowIdFromGristRow)
+      .filter((rowId) => rowId != null)
+      .join(",");
+  }
+
+  function directConstraintSignature() {
+    const constrainedTables = LEVELS
+      .map((levelInfo) => directMappingConfig.levels[levelInfo.level])
+      .filter(isDirectLevelDrivenByCurrentView)
+      .map((cfg) => cfg.tableId);
+    if (!constrainedTables.length) return null;
+    return `${[...new Set(constrainedTables)].sort().join("|")}:${currentViewRowIdSignature()}`;
+  }
+
+  async function sourceRowsForTable(tableId) {
+    if (!sourceTableRowsCache.has(tableId)) {
+      sourceTableRowsCache.set(tableId, rowsFromGristTable(await grist.docApi.fetchTable(tableId)));
+    }
+    return sourceTableRowsCache.get(tableId);
+  }
+
+  function invalidateSourceTableRows(tableId, reason) {
+    // Cache invalidation policy: source table rows are reused across renders and
+    // cleared only for the table touched by direct writes/additions/deletions.
+    // Metadata/reference caches stay intact because row mutations do not change schema.
+    if (!tableId) return;
+    sourceTableRowsCache.delete(tableId);
+    directHierarchyDirty = true;
+    directHierarchyConstraintSignature = null;
+    console.debug(`Cache lignes source invalidé pour ${tableId}${reason ? ` (${reason})` : ""}`);
+  }
+
+  function clearAllSourceTableRowsCache(reason) {
+    // Mapping or view-context changes can affect which source tables are read; clear all rows.
+    sourceTableRowsCache.clear();
+    directHierarchyDirty = true;
+    directHierarchyConstraintSignature = null;
+    console.debug(`Cache lignes source entièrement invalidé${reason ? ` (${reason})` : ""}`);
+  }
+
   async function directRowsForLevel(cfg) {
-    const sourceRows = rowsFromGristTable(await grist.docApi.fetchTable(cfg.tableId));
+    const sourceRows = await sourceRowsForTable(cfg.tableId);
     if (!isDirectLevelDrivenByCurrentView(cfg)) return { rows: sourceRows, isConstrained: false };
 
     const sourceRowsById = new Map();
@@ -1508,6 +1555,11 @@
   }
 
   async function buildDirectMultitableRecords() {
+    const constraintSignature = directConstraintSignature();
+    if (constraintSignature && !directHierarchyDirty && constraintSignature === directHierarchyConstraintSignature && allRecords.length) {
+      return allRecords;
+    }
+
     await loadSourceColumnMetadata();
     const nodes = new Map();
     const levelNodes = new Map();
@@ -1582,6 +1634,8 @@
     nodeById = visibleNodes;
     allRecords = Array.from(visibleNodes.values());
     treeRoots = visibleRoots;
+    directHierarchyDirty = false;
+    directHierarchyConstraintSignature = constraintSignature;
     return allRecords;
   }
 
@@ -2168,6 +2222,7 @@
       await grist.docApi.applyUserActions([["UpdateRecord", node.source.tableId, node.source.rowId, sourceFields]]);
       setDebugSyncMode("docApi.applyUserActions (vraie table source)");
       setDebugAction(`Update ${node.source.tableId}#${node.source.rowId}: ${Object.keys(sourceFields).join(", ")}`);
+      invalidateSourceTableRows(node.source.tableId, `écriture ${debugLabel || "champ"}`);
       return;
     }
 
@@ -2758,6 +2813,7 @@
     await grist.docApi.applyUserActions([["RemoveRecord", node.source.tableId, node.source.rowId]]);
     setDebugSyncMode("docApi.applyUserActions (suppression table source)");
     setDebugAction(`Remove ${node.source.tableId}#${node.source.rowId}`);
+    invalidateSourceTableRows(node.source.tableId, "suppression");
     if (selectedNodeId === node.id) selectedNodeId = null;
     hideTooltip();
     await DataModel.loadAndRenderDirectMapping();
@@ -2775,6 +2831,7 @@
     await grist.docApi.applyUserActions([["AddRecord", cfg.tableId, null, fields]]);
     setDebugSyncMode("docApi.applyUserActions (ajout table source)");
     setDebugAction(`Add ${cfg.tableId}: ${Object.keys(fields).join(", ")}`);
+    invalidateSourceTableRows(cfg.tableId, "ajout");
     if (parentNode) expandedNodes[parentNode.id] = true;
     await DataModel.loadAndRenderDirectMapping();
     showToast(`Niveau ${level} ajouté`, "success");
@@ -3360,12 +3417,15 @@
 
   grist.onRecords(async function (records) {
     setDebugStatus(`onRecords reçu: ${records ? records.length : 0} ligne(s)`);
+    const previousViewSignature = currentTableId ? `${currentTableId}:${currentViewRowIdSignature()}` : null;
     currentViewRecords = Array.isArray(records) ? records : [];
     try {
       currentTableId = await grist.selectedTable.getTableId();
     } catch (e) {
       currentTableId = null;
     }
+    const nextViewSignature = currentTableId ? `${currentTableId}:${currentViewRowIdSignature()}` : null;
+    if (previousViewSignature !== nextViewSignature) directHierarchyDirty = true;
 
     if (await DataModel.loadAndRenderDirectMapping()) return;
 
