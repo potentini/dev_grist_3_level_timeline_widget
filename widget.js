@@ -2365,7 +2365,7 @@
     if (currentPeriodEl) currentPeriodEl.hidden = viewMode !== "timeline";
     if (tableToolbarActionsEl) tableToolbarActionsEl.hidden = viewMode !== "table";
     renderTableFieldSelect();
-    if (timelineDateSortSelect?.parentElement) timelineDateSortSelect.parentElement.hidden = viewMode !== "timeline";
+    if (timelineDateSortSelect?.parentElement) timelineDateSortSelect.parentElement.hidden = false;
     updateTimelineDateSortSelect();
   }
 
@@ -2421,8 +2421,8 @@
     return [...(node.children || [])].sort(compareNodesForTimeline);
   }
 
-  function sortedDefaultChildren(node) {
-    return [...(node.children || [])].sort(sortNodes);
+  function sortedTableChildren(node) {
+    return [...(node.children || [])].sort(compareNodesForTimeline);
   }
 
   function tableFilterValue(node, field) {
@@ -2456,11 +2456,11 @@
       if (!matchesSubtree) return;
       rows.push(node);
       const expanded = filtered || isNodeExpanded(node);
-      for (const child of sortedDefaultChildren(node)) {
+      for (const child of sortedTableChildren(node)) {
         if (expanded || hasLinkedSelectionInSubtree(child)) walk(child);
       }
     }
-    [...treeRoots].sort(sortNodes).forEach((root) => walk(root));
+    [...treeRoots].sort(compareNodesForTimeline).forEach((root) => walk(root));
     return rows;
   }
 
