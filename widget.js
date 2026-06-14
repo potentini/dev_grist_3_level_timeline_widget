@@ -158,6 +158,7 @@
   const VIRTUAL_OVERSCAN_ROWS = 8;
   let syncingTimelineScroll = false;
   let timelineScrollListenersReady = false;
+  let resizeRenderFrame = null;
 
   function verticalScrollContainer(el) {
     const ganttBody = ganttContainer?.querySelector(".gantt-body");
@@ -204,6 +205,16 @@
     window.requestAnimationFrame(() => {
       TimelineView.renderTaskList();
       TimelineView.renderTimeline();
+    });
+  }
+
+  function scheduleResizeRender() {
+    if (resizeRenderFrame !== null) return;
+    resizeRenderFrame = window.requestAnimationFrame(() => {
+      resizeRenderFrame = null;
+      if (!allRecords.length) return;
+      if (zoomMode === "day") keepOrRecomputeVisibleRange();
+      render();
     });
   }
 
@@ -3287,9 +3298,7 @@
     tableFieldPickerEl?.classList.remove("open");
   });
   window.addEventListener("resize", () => {
-    if (!allRecords.length) return;
-    if (zoomMode === "day") keepOrRecomputeVisibleRange();
-    render();
+    scheduleResizeRender();
   });
 
   function renderDirectMappingPanel() {
