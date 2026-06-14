@@ -1818,7 +1818,7 @@
     if (!tracks.length) return;
     const totalDays = diffInDays(visibleStart, visibleEnd) + 1;
     if (totalDays <= 0) return;
-    const { containerWidth } = recomputeCellWidth(totalDays);
+    const { cellWidth, containerWidth } = recomputeCellWidth(totalDays);
     const rowHeight = 34;
     const totalHeight = tracks.length * rowHeight;
     timelineGridEl.style.width = containerWidth + "px";
@@ -1839,16 +1839,15 @@
       return (diffInDays(visibleStart, clamped) + 0.5) / totalDays;
     }
 
+    const weekStartOffset = (visibleStart.getDay() + 6) % 7;
+    timelineGridEl.style.setProperty("--week-offset-width", `${-weekStartOffset * cellWidth}px`);
+    timelineGridEl.style.setProperty("--weekend-start-width", `${5 * cellWidth}px`);
+    timelineGridEl.style.setProperty("--week-cycle-width", `${7 * cellWidth}px`);
+
     for (let t = 0; t < tracks.length; t++) {
       const row = document.createElement("div");
       row.className = "grid-row";
       row.style.width = containerWidth + "px";
-      for (let i = 0; i < totalDays; i++) {
-        const d = addDays(visibleStart, i);
-        const cell = document.createElement("div");
-        cell.className = "grid-cell" + (isWeekend(d) ? " weekend" : "");
-        row.appendChild(cell);
-      }
       timelineGridEl.appendChild(row);
     }
 
