@@ -1564,12 +1564,19 @@
     const nodes = new Map();
     const levelNodes = new Map();
     const constrainedLevels = new Set();
+    const configuredLevels = LEVELS
+      .map((levelInfo) => ({
+        ...levelInfo,
+        cfg: directMappingConfig.levels[levelInfo.level]
+      }))
+      .filter(({ cfg }) => cfg?.tableId && cfg.nameCol);
+
+    const levelRows = await Promise.all(configuredLevels.map(({ cfg }) => directRowsForLevel(cfg)));
     let sourceIndex = 0;
 
-    for (const levelInfo of LEVELS) {
-      const cfg = directMappingConfig.levels[levelInfo.level];
-      if (!cfg?.tableId || !cfg.nameCol) continue;
-      const { rows, isConstrained } = await directRowsForLevel(cfg);
+    configuredLevels.forEach((levelInfo, levelPosition) => {
+      const { cfg } = levelInfo;
+      const { rows, isConstrained } = levelRows[levelPosition];
       if (isConstrained) constrainedLevels.add(levelInfo.level);
       const byRowId = new Map();
       for (const row of rows) {
@@ -1579,7 +1586,7 @@
         byRowId.set(node.source.rowId, node);
       }
       levelNodes.set(levelInfo.level, { rows, byRowId, cfg, isConstrained });
-    }
+    });
 
     const hasConstrainedLevel = constrainedLevels.size > 0;
     const minConstrainedLevel = hasConstrainedLevel ? Math.min(...constrainedLevels) : null;
