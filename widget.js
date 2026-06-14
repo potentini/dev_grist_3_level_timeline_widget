@@ -2730,6 +2730,84 @@
     return `<input ${baseAttrs} type="text" value="${escapeHtml(raw ?? value ?? "")}" />`;
   }
 
+  const tableViewDomState = {
+    headerSignature: null
+  };
+
+  function tableHeaderSignature(tableFields) {
+    return JSON.stringify({
+      fields: tableFields.map(({ field, label, width }) => ({ field, label, width })),
+      filters: tableColumnFilters,
+      openFilter: openTableFilterField
+    });
+  }
+
+  function renderTableHeader(tableEl, tableFields) {
+    const signature = tableHeaderSignature(tableFields);
+    let thead = tableEl.tHead;
+    if (!thead) thead = tableEl.createTHead();
+    if (tableViewDomState.headerSignature === signature && thead.rows.length) return;
+    const header = tableFields.map(renderTableHeaderCell).join("") + '<th style="width:180px">Actions</th>';
+    thead.innerHTML = `<tr>${header}</tr>`;
+    tableViewDomState.headerSignature = signature;
+  }
+
+  function renderTableBodyRow(node, tableFields) {
+    const color = getColorForNode(node);
+    const pad = 10 + (node.level - 1) * 24;
+    const toggle = `<button type="button" class="table-expander" data-table-toggle="${escapeHtml(node.id)}" ${node.children.length ? "" : "disabled"}>${node.children.length ? (isNodeExpanded(node) ? "▾" : "▸") : ""}</button>`;
+    const cells = tableFields.map((col, index) => {
+      if (col.field === "name") {
+        const nameCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, "name")}</div>`;
+        return `<td>${nameCell}</td>`;
+      }
+      if (index === 0) {
+        const labelCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, col.field)}</div>`;
+        return `<td>${labelCell}</td>`;
+      }
+      return `<td>${buildTableInput(node, col.field)}</td>`;
+    });
+    const canAddChild = node.level < 3 && canAddLevel(node.level + 1);
+    const addAction = node.level < 3
+      ? `<button type="button" class="btn btn-small row-add-btn" data-add-child="${escapeHtml(node.id)}" ${canAddChild ? "" : "disabled"}>+ Niveau ${node.level + 1}</button>`
+      : "";
+    const deleteAction = `<button type="button" class="btn btn-small row-delete-btn" data-delete-node="${escapeHtml(node.id)}" ${canDeleteNode(node) ? "" : "disabled"}>Supprimer</button>`;
+    return `<tr class="level-${node.level}${selectedNodeId === node.id ? " selected" : ""}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${addAction}${deleteAction}</td></tr>`;
+  }
+
+  function tableRowElementFromHtml(html) {
+    const template = document.createElement("template");
+    template.innerHTML = html.trim();
+    return template.content.firstElementChild;
+  }
+
+  function renderTableBody(tbody, rows, range, tableFields) {
+    const colSpan = tableFields.length + 1;
+    const renderedRows = rows.slice(range.start, range.end);
+    const existingRowsById = new Map(Array.from(tbody.querySelectorAll("tr[data-node-id]")).map((row) => [row.dataset.nodeId, row]));
+    const activeEditor = hierarchyTableWrapEl.contains(document.activeElement) && document.activeElement?.matches?.(".table-cell-editor")
+      ? document.activeElement
+      : null;
+    const nextNodes = [];
+
+    if (range.topSpacer) {
+      nextNodes.push(tableRowElementFromHtml(`<tr class="virtual-table-spacer" aria-hidden="true"><td colspan="${colSpan}" style="height:${range.topSpacer}px;padding:0;border:0"></td></tr>`));
+    }
+
+    for (const node of renderedRows) {
+      const html = renderTableBodyRow(node, tableFields);
+      const existing = existingRowsById.get(String(node.id));
+      const keepActiveEdit = Boolean(activeEditor && existing?.contains(activeEditor));
+      nextNodes.push(existing && (keepActiveEdit || existing.outerHTML === html) ? existing : tableRowElementFromHtml(html));
+    }
+
+    if (range.bottomSpacer) {
+      nextNodes.push(tableRowElementFromHtml(`<tr class="virtual-table-spacer" aria-hidden="true"><td colspan="${colSpan}" style="height:${range.bottomSpacer}px;padding:0;border:0"></td></tr>`));
+    }
+
+    tbody.replaceChildren(...nextNodes);
+  }
+
   function renderTableView() {
     if (!hierarchyTableWrapEl) return;
     const rows = visibleTableRows();
@@ -2738,39 +2816,20 @@
     if (taskCountEl) taskCountEl.textContent = `${allRecords.length} élément(s)`;
     if (!rows.length) {
       hierarchyTableWrapEl.innerHTML = '<div class="table-empty">Aucun élément à afficher.</div>';
+      tableViewDomState.headerSignature = null;
       return;
     }
     scheduleTableReferenceRefresh(rows);
     tableColumnFilters = sanitizeTableColumnFilters(tableColumnFilters);
     const tableFields = visibleTableFieldDefs();
-    const header = tableFields.map(renderTableHeaderCell).join("") + '<th style="width:180px">Actions</th>';
-    const renderedRows = rows.slice(range.start, range.end);
-    const body = renderedRows.map((node) => {
-      const color = getColorForNode(node);
-      const pad = 10 + (node.level - 1) * 24;
-      const toggle = `<button type="button" class="table-expander" data-table-toggle="${escapeHtml(node.id)}" ${node.children.length ? "" : "disabled"}>${node.children.length ? (isNodeExpanded(node) ? "▾" : "▸") : ""}</button>`;
-      const cells = tableFields.map((col, index) => {
-        if (col.field === "name") {
-          const nameCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, "name")}</div>`;
-          return `<td>${nameCell}</td>`;
-        }
-        if (index === 0) {
-          const labelCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, col.field)}</div>`;
-          return `<td>${labelCell}</td>`;
-        }
-        return `<td>${buildTableInput(node, col.field)}</td>`;
-      });
-      const canAddChild = node.level < 3 && canAddLevel(node.level + 1);
-      const addAction = node.level < 3
-        ? `<button type="button" class="btn btn-small row-add-btn" data-add-child="${escapeHtml(node.id)}" ${canAddChild ? "" : "disabled"}>+ Niveau ${node.level + 1}</button>`
-        : "";
-      const deleteAction = `<button type="button" class="btn btn-small row-delete-btn" data-delete-node="${escapeHtml(node.id)}" ${canDeleteNode(node) ? "" : "disabled"}>Supprimer</button>`;
-      return `<tr class="level-${node.level}${selectedNodeId === node.id ? " selected" : ""}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${addAction}${deleteAction}</td></tr>`;
-    }).join("");
-    const colSpan = tableFields.length + 1;
-    const topSpacer = range.topSpacer ? `<tr class="virtual-table-spacer" aria-hidden="true"><td colspan="${colSpan}" style="height:${range.topSpacer}px;padding:0;border:0"></td></tr>` : "";
-    const bottomSpacer = range.bottomSpacer ? `<tr class="virtual-table-spacer" aria-hidden="true"><td colspan="${colSpan}" style="height:${range.bottomSpacer}px;padding:0;border:0"></td></tr>` : "";
-    hierarchyTableWrapEl.innerHTML = `<table class="hierarchy-table"><thead><tr>${header}</tr></thead><tbody>${topSpacer}${body}${bottomSpacer}</tbody></table>`;
+    let tableEl = hierarchyTableWrapEl.querySelector(":scope > table.hierarchy-table");
+    if (!tableEl) {
+      hierarchyTableWrapEl.innerHTML = '<table class="hierarchy-table"><thead></thead><tbody></tbody></table>';
+      tableEl = hierarchyTableWrapEl.querySelector(":scope > table.hierarchy-table");
+      tableViewDomState.headerSignature = null;
+    }
+    renderTableHeader(tableEl, tableFields);
+    renderTableBody(tableEl.tBodies[0] || tableEl.createTBody(), rows, range, tableFields);
   }
 
   function readTableEditValue(input) {
