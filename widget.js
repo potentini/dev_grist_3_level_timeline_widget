@@ -150,6 +150,72 @@
     pxPerDay: 0
   };
 
+  const TIMELINE_ROW_HEIGHT = 34;
+  const TABLE_ROW_HEIGHT = 35;
+  const VIRTUAL_OVERSCAN_ROWS = 8;
+  let syncingTimelineScroll = false;
+  let timelineScrollListenersReady = false;
+
+  function verticalScrollContainer(el) {
+    const ganttBody = ganttContainer?.querySelector(".gantt-body");
+    if (el === taskListEl || el === timelineBodyEl) return ganttBody || el;
+    return el;
+  }
+
+  function visibleRangeForContainer(el, totalRows, rowHeight, overscan = VIRTUAL_OVERSCAN_ROWS) {
+    const scrollEl = verticalScrollContainer(el);
+    const scrollTop = Math.max(0, scrollEl?.scrollTop || 0);
+    const viewportHeight = scrollEl?.clientHeight || window.innerHeight || rowHeight * 20;
+    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+    const visibleCount = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
+    const end = Math.min(totalRows, first + visibleCount);
+    return {
+      start: first,
+      end,
+      topSpacer: first * rowHeight,
+      bottomSpacer: Math.max(0, (totalRows - end) * rowHeight)
+    };
+  }
+
+  function createVerticalSpacer(height) {
+    const spacer = document.createElement("div");
+    spacer.className = "virtual-spacer";
+    spacer.style.height = `${height}px`;
+    spacer.style.flex = `0 0 ${height}px`;
+    return spacer;
+  }
+
+  function syncTimelineScroll(sourceEl) {
+    if (syncingTimelineScroll) return;
+    syncingTimelineScroll = true;
+    const source = verticalScrollContainer(sourceEl);
+    for (const el of [taskListEl, timelineBodyEl]) {
+      const target = verticalScrollContainer(el);
+      if (target && target !== source) target.scrollTop = source?.scrollTop || 0;
+    }
+    syncingTimelineScroll = false;
+  }
+
+  function scheduleTimelineVirtualRender() {
+    if (viewMode !== "timeline") return;
+    window.requestAnimationFrame(() => {
+      TimelineView.renderTaskList();
+      TimelineView.renderTimeline();
+    });
+  }
+
+  function ensureTimelineScrollSync() {
+    if (timelineScrollListenersReady) return;
+    timelineScrollListenersReady = true;
+    const ganttBody = ganttContainer?.querySelector(".gantt-body");
+    for (const el of new Set([ganttBody, taskListEl, timelineBodyEl].filter(Boolean))) {
+      el.addEventListener("scroll", () => {
+        syncTimelineScroll(el);
+        scheduleTimelineVirtualRender();
+      }, { passive: true });
+    }
+  }
+
   function setDebugStatus(message) {
     if (debugStatusEl) debugStatusEl.textContent = message;
   }
@@ -1064,7 +1130,8 @@
   }
 
   function renderTaskList() {
-    const tracks = buildTracks();
+    const tracks = flatTracks.length ? flatTracks : buildTracks();
+    const range = visibleRangeForContainer(taskListEl, tracks.length, TIMELINE_ROW_HEIGHT);
     taskListEl.innerHTML = "";
     taskCountEl.textContent = `${allRecords.length} élément(s)`;
     if (!tracks.length) {
@@ -1072,7 +1139,8 @@
       return;
     }
 
-    for (const track of tracks) {
+    taskListEl.appendChild(createVerticalSpacer(range.topSpacer));
+    for (const track of tracks.slice(range.start, range.end)) {
       if (track.kind === "compact") {
         const row = document.createElement("div");
         row.className = `task-row child-row level-${Math.min(3, track.parent.level + 1)} compact-row`;
@@ -1115,6 +1183,7 @@
       row.appendChild(info);
       taskListEl.appendChild(row);
     }
+    taskListEl.appendChild(createVerticalSpacer(range.bottomSpacer));
   }
 
   function escapeHtml(value) {
@@ -1819,8 +1888,9 @@
     const totalDays = diffInDays(visibleStart, visibleEnd) + 1;
     if (totalDays <= 0) return;
     const { cellWidth, containerWidth } = recomputeCellWidth(totalDays);
-    const rowHeight = 34;
+    const rowHeight = TIMELINE_ROW_HEIGHT;
     const totalHeight = tracks.length * rowHeight;
+    const range = visibleRangeForContainer(timelineBodyEl, tracks.length, rowHeight);
     timelineGridEl.style.width = containerWidth + "px";
     timelineGridEl.style.height = totalHeight + "px";
     timelineGridEl.style.minHeight = totalHeight + "px";
@@ -1844,12 +1914,14 @@
     timelineGridEl.style.setProperty("--weekend-start-width", `${5 * cellWidth}px`);
     timelineGridEl.style.setProperty("--week-cycle-width", `${7 * cellWidth}px`);
 
-    for (let t = 0; t < tracks.length; t++) {
+    timelineGridEl.appendChild(createVerticalSpacer(range.topSpacer));
+    for (let t = range.start; t < range.end; t++) {
       const row = document.createElement("div");
       row.className = "grid-row";
       row.style.width = containerWidth + "px";
       timelineGridEl.appendChild(row);
     }
+    timelineGridEl.appendChild(createVerticalSpacer(range.bottomSpacer));
 
     const today = normalizeDate(new Date());
     const todayDiff = diffInDays(visibleStart, today);
@@ -1937,7 +2009,7 @@
       timelineGridEl.appendChild(bar);
     }
 
-    for (let i = 0; i < tracks.length; i++) {
+    for (let i = range.start; i < range.end; i++) {
       const track = tracks[i];
       if (track.kind === "node") addNodeBar(i, track.node, false);
       else if (track.kind === "compact") track.nodes.forEach((node) => addNodeBar(i, node, true));
@@ -2599,6 +2671,7 @@
   function renderTableView() {
     if (!hierarchyTableWrapEl) return;
     const rows = visibleTableRows();
+    const range = visibleRangeForContainer(hierarchyTableWrapEl, rows.length, TABLE_ROW_HEIGHT);
     renderTableFieldSelect();
     if (taskCountEl) taskCountEl.textContent = `${allRecords.length} élément(s)`;
     if (!rows.length) {
@@ -2609,7 +2682,8 @@
     tableColumnFilters = sanitizeTableColumnFilters(tableColumnFilters);
     const tableFields = visibleTableFieldDefs();
     const header = tableFields.map(renderTableHeaderCell).join("") + '<th style="width:180px">Actions</th>';
-    const body = rows.map((node) => {
+    const renderedRows = rows.slice(range.start, range.end);
+    const body = renderedRows.map((node) => {
       const color = getColorForNode(node);
       const pad = 10 + (node.level - 1) * 24;
       const toggle = `<button type="button" class="table-expander" data-table-toggle="${escapeHtml(node.id)}" ${node.children.length ? "" : "disabled"}>${node.children.length ? (isNodeExpanded(node) ? "▾" : "▸") : ""}</button>`;
@@ -2631,7 +2705,10 @@
       const deleteAction = `<button type="button" class="btn btn-small row-delete-btn" data-delete-node="${escapeHtml(node.id)}" ${canDeleteNode(node) ? "" : "disabled"}>Supprimer</button>`;
       return `<tr class="level-${node.level}${selectedNodeId === node.id ? " selected" : ""}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${addAction}${deleteAction}</td></tr>`;
     }).join("");
-    hierarchyTableWrapEl.innerHTML = `<table class="hierarchy-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
+    const colSpan = tableFields.length + 1;
+    const topSpacer = range.topSpacer ? `<tr class="virtual-table-spacer" aria-hidden="true"><td colspan="${colSpan}" style="height:${range.topSpacer}px;padding:0;border:0"></td></tr>` : "";
+    const bottomSpacer = range.bottomSpacer ? `<tr class="virtual-table-spacer" aria-hidden="true"><td colspan="${colSpan}" style="height:${range.bottomSpacer}px;padding:0;border:0"></td></tr>` : "";
+    hierarchyTableWrapEl.innerHTML = `<table class="hierarchy-table"><thead><tr>${header}</tr></thead><tbody>${topSpacer}${body}${bottomSpacer}</tbody></table>`;
   }
 
   function readTableEditValue(input) {
@@ -2717,6 +2794,8 @@
     }
     initColorFieldSelect();
     if (viewMode === "timeline") {
+      ensureTimelineScrollSync();
+      flatTracks = buildTracks();
       TimelineView.buildHeaders();
       TimelineView.renderTaskList();
       TimelineView.renderTimeline();
@@ -2764,6 +2843,10 @@
 
   function bindTableHandlers() {
     tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
+    hierarchyTableWrapEl?.addEventListener("scroll", () => {
+      if (viewMode !== "table") return;
+      window.requestAnimationFrame(() => renderTableView());
+    }, { passive: true });
 
     hierarchyTableWrapEl?.addEventListener("click", async (e) => {
       const filterToggle = e.target.closest("[data-table-filter-toggle]");
