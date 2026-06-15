@@ -289,10 +289,10 @@
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      // La vue active est volontairement exclue du repli localStorage : cette clé est
-      // commune à toutes les instances qui utilisent la même URL. La vue est restaurée
-      // via les options Grist propres à chaque widget inséré.
-      applyState(JSON.parse(raw), { includeViewMode: false });
+      // Conserver aussi la vue active dans le repli localStorage : les options Grist
+      // restent prioritaires quand elles arrivent, mais ce repli évite de revenir en
+      // timeline après une fermeture complète du navigateur ou un chargement hors Grist.
+      applyState(JSON.parse(raw), { includeViewMode: true });
     } catch (e) {
       console.warn("Impossible de charger l’état persistant :", e);
     }
