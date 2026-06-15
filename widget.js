@@ -1494,6 +1494,25 @@
     return { rows: visibleRows, isConstrained: true };
   }
 
+  function ensureRenderableRoots(roots, nodes) {
+    const visibleRoots = [];
+    const seen = new Set();
+    for (const root of roots || []) {
+      if (!root || !nodes.has(root.id) || seen.has(root.id)) continue;
+      visibleRoots.push(root);
+      seen.add(root.id);
+    }
+    for (const node of nodes.values()) {
+      if (seen.has(node.id)) continue;
+      const parentVisible = node.parentId && nodes.has(node.parentId);
+      if (parentVisible) continue;
+      visibleRoots.push(node);
+      seen.add(node.id);
+    }
+    visibleRoots.sort(sortNodes);
+    return visibleRoots;
+  }
+
   function constrainedDirectTree(roots, nodes, levelNodes) {
     const constrainedNodeIds = new Set();
     const selectedContextNodeIds = new Set();
@@ -1562,7 +1581,7 @@
     for (const [id, node] of nodes.entries()) {
       if (visibleIds.has(id)) prunedNodes.set(id, node);
     }
-    return { roots: prunedRoots, nodes: prunedNodes };
+    return { roots: ensureRenderableRoots(prunedRoots, prunedNodes), nodes: prunedNodes };
   }
 
   async function buildDirectMultitableRecords() {
@@ -1645,10 +1664,10 @@
     }
 
     const constrained = constrainedDirectTree(roots, nodes, levelNodes);
-    const visibleRoots = constrained.roots;
     const visibleNodes = constrained.nodes;
+    const visibleRoots = ensureRenderableRoots(constrained.roots, visibleNodes);
 
-    visibleRoots.sort(sortNodes).forEach(finalize);
+    visibleRoots.forEach(finalize);
     nodeById = visibleNodes;
     allRecords = Array.from(visibleNodes.values());
     treeRoots = visibleRoots;
