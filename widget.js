@@ -158,7 +158,6 @@
   const VIRTUAL_OVERSCAN_ROWS = 8;
   let syncingTimelineScroll = false;
   let timelineScrollListenersReady = false;
-  let resizeRenderFrame = null;
 
   function verticalScrollContainer(el) {
     const ganttBody = ganttContainer?.querySelector(".gantt-body");
@@ -167,19 +166,17 @@
   }
 
   function visibleRangeForContainer(el, totalRows, rowHeight, overscan = VIRTUAL_OVERSCAN_ROWS) {
-    const safeTotalRows = Math.max(0, Number(totalRows) || 0);
     const scrollEl = verticalScrollContainer(el);
     const scrollTop = Math.max(0, scrollEl?.scrollTop || 0);
-    const viewportHeight = Math.max(rowHeight, scrollEl?.clientHeight || window.innerHeight || rowHeight * 20);
-    const visibleCount = Math.max(1, Math.ceil(viewportHeight / rowHeight) + overscan * 2);
-    const maxStart = Math.max(0, safeTotalRows - visibleCount);
-    const first = Math.min(maxStart, Math.max(0, Math.floor(scrollTop / rowHeight) - overscan));
-    const end = Math.min(safeTotalRows, first + visibleCount);
+    const viewportHeight = scrollEl?.clientHeight || window.innerHeight || rowHeight * 20;
+    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+    const visibleCount = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
+    const end = Math.min(totalRows, first + visibleCount);
     return {
       start: first,
       end,
       topSpacer: first * rowHeight,
-      bottomSpacer: Math.max(0, (safeTotalRows - end) * rowHeight)
+      bottomSpacer: Math.max(0, (totalRows - end) * rowHeight)
     };
   }
 
@@ -207,16 +204,6 @@
     window.requestAnimationFrame(() => {
       TimelineView.renderTaskList();
       TimelineView.renderTimeline();
-    });
-  }
-
-  function scheduleResizeRender() {
-    if (resizeRenderFrame !== null) return;
-    resizeRenderFrame = window.requestAnimationFrame(() => {
-      resizeRenderFrame = null;
-      if (!allRecords.length) return;
-      if (zoomMode === "day") keepOrRecomputeVisibleRange();
-      render();
     });
   }
 
@@ -291,10 +278,10 @@
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      // Conserver aussi la vue active dans le repli localStorage : les options Grist
-      // restent prioritaires quand elles arrivent, mais ce repli évite de revenir en
-      // timeline après une fermeture complète du navigateur ou un chargement hors Grist.
-      applyState(JSON.parse(raw), { includeViewMode: true });
+      // La vue active est volontairement exclue du repli localStorage : cette clé est
+      // commune à toutes les instances qui utilisent la même URL. La vue est restaurée
+      // via les options Grist propres à chaque widget inséré.
+      applyState(JSON.parse(raw), { includeViewMode: false });
     } catch (e) {
       console.warn("Impossible de charger l’état persistant :", e);
     }
@@ -1496,25 +1483,6 @@
     return { rows: visibleRows, isConstrained: true };
   }
 
-  function ensureRenderableRoots(roots, nodes) {
-    const visibleRoots = [];
-    const seen = new Set();
-    for (const root of roots || []) {
-      if (!root || !nodes.has(root.id) || seen.has(root.id)) continue;
-      visibleRoots.push(root);
-      seen.add(root.id);
-    }
-    for (const node of nodes.values()) {
-      if (seen.has(node.id)) continue;
-      const parentVisible = node.parentId && nodes.has(node.parentId);
-      if (parentVisible) continue;
-      visibleRoots.push(node);
-      seen.add(node.id);
-    }
-    visibleRoots.sort(sortNodes);
-    return visibleRoots;
-  }
-
   function constrainedDirectTree(roots, nodes, levelNodes) {
     const constrainedNodeIds = new Set();
     const selectedContextNodeIds = new Set();
@@ -1583,7 +1551,7 @@
     for (const [id, node] of nodes.entries()) {
       if (visibleIds.has(id)) prunedNodes.set(id, node);
     }
-    return { roots: ensureRenderableRoots(prunedRoots, prunedNodes), nodes: prunedNodes };
+    return { roots: prunedRoots, nodes: prunedNodes };
   }
 
   async function buildDirectMultitableRecords() {
@@ -1666,10 +1634,10 @@
     }
 
     const constrained = constrainedDirectTree(roots, nodes, levelNodes);
+    const visibleRoots = constrained.roots;
     const visibleNodes = constrained.nodes;
-    const visibleRoots = ensureRenderableRoots(constrained.roots, visibleNodes);
 
-    visibleRoots.forEach(finalize);
+    visibleRoots.sort(sortNodes).forEach(finalize);
     nodeById = visibleNodes;
     allRecords = Array.from(visibleNodes.values());
     treeRoots = visibleRoots;
@@ -2967,11 +2935,6 @@
     hideTooltip();
     saveState();
     render();
-    if (mode === "table") {
-      window.requestAnimationFrame(() => {
-        if (viewMode === "table") TableView.renderTableView();
-      });
-    }
   }
 
   function toggleEditing() {
@@ -3324,7 +3287,9 @@
     tableFieldPickerEl?.classList.remove("open");
   });
   window.addEventListener("resize", () => {
-    scheduleResizeRender();
+    if (!allRecords.length) return;
+    if (zoomMode === "day") keepOrRecomputeVisibleRange();
+    render();
   });
 
   function renderDirectMappingPanel() {
