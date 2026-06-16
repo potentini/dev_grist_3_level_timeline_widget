@@ -167,17 +167,19 @@
   }
 
   function visibleRangeForContainer(el, totalRows, rowHeight, overscan = VIRTUAL_OVERSCAN_ROWS) {
+    const safeTotalRows = Math.max(0, Number(totalRows) || 0);
     const scrollEl = verticalScrollContainer(el);
     const scrollTop = Math.max(0, scrollEl?.scrollTop || 0);
-    const viewportHeight = scrollEl?.clientHeight || window.innerHeight || rowHeight * 20;
-    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
-    const visibleCount = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
-    const end = Math.min(totalRows, first + visibleCount);
+    const viewportHeight = Math.max(rowHeight, scrollEl?.clientHeight || window.innerHeight || rowHeight * 20);
+    const visibleCount = Math.max(1, Math.ceil(viewportHeight / rowHeight) + overscan * 2);
+    const maxStart = Math.max(0, safeTotalRows - visibleCount);
+    const first = Math.min(maxStart, Math.max(0, Math.floor(scrollTop / rowHeight) - overscan));
+    const end = Math.min(safeTotalRows, first + visibleCount);
     return {
       start: first,
       end,
       topSpacer: first * rowHeight,
-      bottomSpacer: Math.max(0, (totalRows - end) * rowHeight)
+      bottomSpacer: Math.max(0, (safeTotalRows - end) * rowHeight)
     };
   }
 
@@ -2965,6 +2967,11 @@
     hideTooltip();
     saveState();
     render();
+    if (mode === "table") {
+      window.requestAnimationFrame(() => {
+        if (viewMode === "table") TableView.renderTableView();
+      });
+    }
   }
 
   function toggleEditing() {
