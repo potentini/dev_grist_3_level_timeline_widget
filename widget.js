@@ -3332,8 +3332,9 @@
     } catch (e) {
       currentTableId = null;
     }
+    setDebugAction("Rafraîchissement suite à onRecords: " + (currentTableId || "table inconnue"));
 
-    if (await scheduleDirectMappingRefresh("records")) return;
+    if (await scheduleDirectMappingRefresh("onRecords: " + (currentTableId || "table inconnue"))) return;
 
     allRecords = [];
     treeRoots = [];
