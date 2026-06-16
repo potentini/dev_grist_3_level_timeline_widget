@@ -82,6 +82,10 @@
   let selectedNodeId = null;
   let directMappingConfig = loadDirectMappingConfig();
   let directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
+  let directRefreshTimer = null;
+  let directRefreshInFlight = false;
+  let directRefreshQueued = false;
+  let directRefreshWaiters = [];
   let sourceColumnMetaPromise = null;
   const sourceColumnMetaCache = new Map();
   const tableMetaCache = new Map();
@@ -1539,6 +1543,46 @@
     }
   }
 
+  function resolveDirectRefreshWaiters(result) {
+    const waiters = directRefreshWaiters;
+    directRefreshWaiters = [];
+    waiters.forEach((resolve) => resolve(result));
+  }
+
+  function scheduleDirectMappingRefresh(reason = "scheduled") {
+    if (directRefreshTimer) clearTimeout(directRefreshTimer);
+
+    return new Promise((resolve) => {
+      directRefreshWaiters.push(resolve);
+      directRefreshTimer = setTimeout(async () => {
+        directRefreshTimer = null;
+
+        if (!directMappingModeActive) {
+          resolveDirectRefreshWaiters(false);
+          return;
+        }
+
+        if (directRefreshInFlight) {
+          directRefreshQueued = true;
+          return;
+        }
+
+        directRefreshInFlight = true;
+        let refreshed = false;
+        try {
+          do {
+            directRefreshQueued = false;
+            setDebugAction(`Refresh mapping interne (${reason})`);
+            refreshed = await loadAndRenderDirectMapping();
+          } while (directRefreshQueued && directMappingModeActive);
+        } finally {
+          directRefreshInFlight = false;
+          resolveDirectRefreshWaiters(refreshed);
+        }
+      }, 100);
+    });
+  }
+
   function scheduleTooltipMetadataRefresh(node) {
     if (!node?.source?.tableId) return;
     const fields = ["name", "start", "end", "status", "responsible", "progress", ...Object.keys(node.extraFields || {}).map((id) => `extra:${id}`)];
@@ -2109,6 +2153,10 @@
     if (newStart && node.source.startCol) sourceFields[node.source.startCol] = toGristDateString(newStart);
     if (newEnd && node.source.endCol) sourceFields[node.source.endCol] = toGristDateString(newEnd);
     await writeNodeFields(node, sourceFields, "dates");
+    if (directMappingModeActive) {
+      await scheduleDirectMappingRefresh("write");
+      return;
+    }
     applyLocalDateChange(node, newStart, newEnd);
   }
 
@@ -2213,7 +2261,7 @@
 
   async function refreshAfterWrite(node, field, value) {
     if (directMappingModeActive) {
-      await DataModel.loadAndRenderDirectMapping();
+      await scheduleDirectMappingRefresh("write");
       return;
     }
     applyLocalTooltipValue(node, field, value);
@@ -2684,7 +2732,7 @@
     setDebugAction(`Remove ${node.source.tableId}#${node.source.rowId}`);
     if (selectedNodeId === node.id) selectedNodeId = null;
     hideTooltip();
-    await DataModel.loadAndRenderDirectMapping();
+    await scheduleDirectMappingRefresh("write");
     showToast("Élément supprimé définitivement", "success");
     return true;
   }
@@ -2700,7 +2748,7 @@
     setDebugSyncMode("docApi.applyUserActions (ajout table source)");
     setDebugAction(`Add ${cfg.tableId}: ${Object.keys(fields).join(", ")}`);
     if (parentNode) expandedNodes[parentNode.id] = true;
-    await DataModel.loadAndRenderDirectMapping();
+    await scheduleDirectMappingRefresh("write");
     showToast(`Niveau ${level} ajouté`, "success");
   }
 
@@ -3161,7 +3209,7 @@
       saveDirectMappingConfig();
       directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
       renderDirectMappingPanel();
-      await DataModel.loadAndRenderDirectMapping();
+      await scheduleDirectMappingRefresh("write");
     });
 
     mappingPanelEl.addEventListener("input", (e) => {
@@ -3183,7 +3231,7 @@
       extra[input.dataset.extraProp] = input.value;
       saveDirectMappingConfig();
       renderDirectMappingPanel();
-      await DataModel.loadAndRenderDirectMapping();
+      await scheduleDirectMappingRefresh("write");
     });
 
     mappingPanelEl.addEventListener("click", async (e) => {
@@ -3206,7 +3254,7 @@
         saveDirectMappingConfig();
         saveState();
         renderDirectMappingPanel();
-        await DataModel.loadAndRenderDirectMapping();
+        await scheduleDirectMappingRefresh("write");
         return;
       }
       if (e.target.closest("#resetManualMappingBtn")) {
@@ -3217,7 +3265,7 @@
         showToast("Mapping interne réinitialisé", "success");
         return;
       }
-      if (e.target.closest("#reloadDirectMappingBtn")) await DataModel.loadAndRenderDirectMapping();
+      if (e.target.closest("#reloadDirectMappingBtn")) await scheduleDirectMappingRefresh("write");
     });
   }
 
@@ -3285,7 +3333,7 @@
       currentTableId = null;
     }
 
-    if (await DataModel.loadAndRenderDirectMapping()) return;
+    if (await scheduleDirectMappingRefresh("records")) return;
 
     allRecords = [];
     treeRoots = [];
