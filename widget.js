@@ -86,9 +86,6 @@
   const sourceColumnMetaCache = new Map();
   const tableMetaCache = new Map();
   const refOptionsCache = new Map();
-  const sourceTableRowsCache = new Map();
-  let directHierarchyDirty = true;
-  let directHierarchyConstraintSignature = null;
   const tooltipState = { nodeId: null, editingField: null, draftValue: null, forceRefresh: false };
   let tooltipHideTimer = null;
 
@@ -152,72 +149,6 @@
     startX: 0,
     pxPerDay: 0
   };
-
-  const TIMELINE_ROW_HEIGHT = 34;
-  const TABLE_ROW_HEIGHT = 35;
-  const VIRTUAL_OVERSCAN_ROWS = 8;
-  let syncingTimelineScroll = false;
-  let timelineScrollListenersReady = false;
-
-  function verticalScrollContainer(el) {
-    const ganttBody = ganttContainer?.querySelector(".gantt-body");
-    if (el === taskListEl || el === timelineBodyEl) return ganttBody || el;
-    return el;
-  }
-
-  function visibleRangeForContainer(el, totalRows, rowHeight, overscan = VIRTUAL_OVERSCAN_ROWS) {
-    const scrollEl = verticalScrollContainer(el);
-    const scrollTop = Math.max(0, scrollEl?.scrollTop || 0);
-    const viewportHeight = scrollEl?.clientHeight || window.innerHeight || rowHeight * 20;
-    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
-    const visibleCount = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
-    const end = Math.min(totalRows, first + visibleCount);
-    return {
-      start: first,
-      end,
-      topSpacer: first * rowHeight,
-      bottomSpacer: Math.max(0, (totalRows - end) * rowHeight)
-    };
-  }
-
-  function createVerticalSpacer(height) {
-    const spacer = document.createElement("div");
-    spacer.className = "virtual-spacer";
-    spacer.style.height = `${height}px`;
-    spacer.style.flex = `0 0 ${height}px`;
-    return spacer;
-  }
-
-  function syncTimelineScroll(sourceEl) {
-    if (syncingTimelineScroll) return;
-    syncingTimelineScroll = true;
-    const source = verticalScrollContainer(sourceEl);
-    for (const el of [taskListEl, timelineBodyEl]) {
-      const target = verticalScrollContainer(el);
-      if (target && target !== source) target.scrollTop = source?.scrollTop || 0;
-    }
-    syncingTimelineScroll = false;
-  }
-
-  function scheduleTimelineVirtualRender() {
-    if (viewMode !== "timeline") return;
-    window.requestAnimationFrame(() => {
-      TimelineView.renderTaskList();
-      TimelineView.renderTimeline();
-    });
-  }
-
-  function ensureTimelineScrollSync() {
-    if (timelineScrollListenersReady) return;
-    timelineScrollListenersReady = true;
-    const ganttBody = ganttContainer?.querySelector(".gantt-body");
-    for (const el of new Set([ganttBody, taskListEl, timelineBodyEl].filter(Boolean))) {
-      el.addEventListener("scroll", () => {
-        syncTimelineScroll(el);
-        scheduleTimelineVirtualRender();
-      }, { passive: true });
-    }
-  }
 
   function setDebugStatus(message) {
     if (debugStatusEl) debugStatusEl.textContent = message;
@@ -452,7 +383,6 @@
   }
 
   function saveDirectMappingConfig() {
-    clearAllSourceTableRowsCache("configuration du mapping");
     saveDirectMappingConfigToLocalStorage(directMappingConfig);
     saveDirectMappingConfigOption(directMappingConfig);
   }
@@ -1134,8 +1064,7 @@
   }
 
   function renderTaskList() {
-    const tracks = flatTracks.length ? flatTracks : buildTracks();
-    const range = visibleRangeForContainer(taskListEl, tracks.length, TIMELINE_ROW_HEIGHT);
+    const tracks = buildTracks();
     taskListEl.innerHTML = "";
     taskCountEl.textContent = `${allRecords.length} élément(s)`;
     if (!tracks.length) {
@@ -1143,8 +1072,7 @@
       return;
     }
 
-    taskListEl.appendChild(createVerticalSpacer(range.topSpacer));
-    for (const track of tracks.slice(range.start, range.end)) {
+    for (const track of tracks) {
       if (track.kind === "compact") {
         const row = document.createElement("div");
         row.className = `task-row child-row level-${Math.min(3, track.parent.level + 1)} compact-row`;
@@ -1187,7 +1115,6 @@
       row.appendChild(info);
       taskListEl.appendChild(row);
     }
-    taskListEl.appendChild(createVerticalSpacer(range.bottomSpacer));
   }
 
   function escapeHtml(value) {
@@ -1421,51 +1348,8 @@
     return !!(cfg?.tableId && currentTableId && cfg.tableId === currentTableId && Array.isArray(currentViewRecords));
   }
 
-  function currentViewRowIdSignature() {
-    if (!Array.isArray(currentViewRecords)) return "";
-    return currentViewRecords
-      .map(rowIdFromGristRow)
-      .filter((rowId) => rowId != null)
-      .join(",");
-  }
-
-  function directConstraintSignature() {
-    const constrainedTables = LEVELS
-      .map((levelInfo) => directMappingConfig.levels[levelInfo.level])
-      .filter(isDirectLevelDrivenByCurrentView)
-      .map((cfg) => cfg.tableId);
-    if (!constrainedTables.length) return null;
-    return `${[...new Set(constrainedTables)].sort().join("|")}:${currentViewRowIdSignature()}`;
-  }
-
-  async function sourceRowsForTable(tableId) {
-    if (!sourceTableRowsCache.has(tableId)) {
-      sourceTableRowsCache.set(tableId, rowsFromGristTable(await grist.docApi.fetchTable(tableId)));
-    }
-    return sourceTableRowsCache.get(tableId);
-  }
-
-  function invalidateSourceTableRows(tableId, reason) {
-    // Cache invalidation policy: source table rows are reused across renders and
-    // cleared only for the table touched by direct writes/additions/deletions.
-    // Metadata/reference caches stay intact because row mutations do not change schema.
-    if (!tableId) return;
-    sourceTableRowsCache.delete(tableId);
-    directHierarchyDirty = true;
-    directHierarchyConstraintSignature = null;
-    console.debug(`Cache lignes source invalidé pour ${tableId}${reason ? ` (${reason})` : ""}`);
-  }
-
-  function clearAllSourceTableRowsCache(reason) {
-    // Mapping or view-context changes can affect which source tables are read; clear all rows.
-    sourceTableRowsCache.clear();
-    directHierarchyDirty = true;
-    directHierarchyConstraintSignature = null;
-    console.debug(`Cache lignes source entièrement invalidé${reason ? ` (${reason})` : ""}`);
-  }
-
   async function directRowsForLevel(cfg) {
-    const sourceRows = await sourceRowsForTable(cfg.tableId);
+    const sourceRows = rowsFromGristTable(await grist.docApi.fetchTable(cfg.tableId));
     if (!isDirectLevelDrivenByCurrentView(cfg)) return { rows: sourceRows, isConstrained: false };
 
     const sourceRowsById = new Map();
@@ -1555,28 +1439,16 @@
   }
 
   async function buildDirectMultitableRecords() {
-    const constraintSignature = directConstraintSignature();
-    if (constraintSignature && !directHierarchyDirty && constraintSignature === directHierarchyConstraintSignature && allRecords.length) {
-      return allRecords;
-    }
-
     await loadSourceColumnMetadata();
     const nodes = new Map();
     const levelNodes = new Map();
     const constrainedLevels = new Set();
-    const configuredLevels = LEVELS
-      .map((levelInfo) => ({
-        ...levelInfo,
-        cfg: directMappingConfig.levels[levelInfo.level]
-      }))
-      .filter(({ cfg }) => cfg?.tableId && cfg.nameCol);
-
-    const levelRows = await Promise.all(configuredLevels.map(({ cfg }) => directRowsForLevel(cfg)));
     let sourceIndex = 0;
 
-    configuredLevels.forEach((levelInfo, levelPosition) => {
-      const { cfg } = levelInfo;
-      const { rows, isConstrained } = levelRows[levelPosition];
+    for (const levelInfo of LEVELS) {
+      const cfg = directMappingConfig.levels[levelInfo.level];
+      if (!cfg?.tableId || !cfg.nameCol) continue;
+      const { rows, isConstrained } = await directRowsForLevel(cfg);
       if (isConstrained) constrainedLevels.add(levelInfo.level);
       const byRowId = new Map();
       for (const row of rows) {
@@ -1586,7 +1458,7 @@
         byRowId.set(node.source.rowId, node);
       }
       levelNodes.set(levelInfo.level, { rows, byRowId, cfg, isConstrained });
-    });
+    }
 
     const hasConstrainedLevel = constrainedLevels.size > 0;
     const minConstrainedLevel = hasConstrainedLevel ? Math.min(...constrainedLevels) : null;
@@ -1641,8 +1513,6 @@
     nodeById = visibleNodes;
     allRecords = Array.from(visibleNodes.values());
     treeRoots = visibleRoots;
-    directHierarchyDirty = false;
-    directHierarchyConstraintSignature = constraintSignature;
     return allRecords;
   }
 
@@ -1948,10 +1818,9 @@
     if (!tracks.length) return;
     const totalDays = diffInDays(visibleStart, visibleEnd) + 1;
     if (totalDays <= 0) return;
-    const { cellWidth, containerWidth } = recomputeCellWidth(totalDays);
-    const rowHeight = TIMELINE_ROW_HEIGHT;
+    const { containerWidth } = recomputeCellWidth(totalDays);
+    const rowHeight = 34;
     const totalHeight = tracks.length * rowHeight;
-    const range = visibleRangeForContainer(timelineBodyEl, tracks.length, rowHeight);
     timelineGridEl.style.width = containerWidth + "px";
     timelineGridEl.style.height = totalHeight + "px";
     timelineGridEl.style.minHeight = totalHeight + "px";
@@ -1970,19 +1839,18 @@
       return (diffInDays(visibleStart, clamped) + 0.5) / totalDays;
     }
 
-    const weekStartOffset = (visibleStart.getDay() + 6) % 7;
-    timelineGridEl.style.setProperty("--week-offset-width", `${-weekStartOffset * cellWidth}px`);
-    timelineGridEl.style.setProperty("--weekend-start-width", `${5 * cellWidth}px`);
-    timelineGridEl.style.setProperty("--week-cycle-width", `${7 * cellWidth}px`);
-
-    timelineGridEl.appendChild(createVerticalSpacer(range.topSpacer));
-    for (let t = range.start; t < range.end; t++) {
+    for (let t = 0; t < tracks.length; t++) {
       const row = document.createElement("div");
       row.className = "grid-row";
       row.style.width = containerWidth + "px";
+      for (let i = 0; i < totalDays; i++) {
+        const d = addDays(visibleStart, i);
+        const cell = document.createElement("div");
+        cell.className = "grid-cell" + (isWeekend(d) ? " weekend" : "");
+        row.appendChild(cell);
+      }
       timelineGridEl.appendChild(row);
     }
-    timelineGridEl.appendChild(createVerticalSpacer(range.bottomSpacer));
 
     const today = normalizeDate(new Date());
     const todayDiff = diffInDays(visibleStart, today);
@@ -2070,7 +1938,7 @@
       timelineGridEl.appendChild(bar);
     }
 
-    for (let i = range.start; i < range.end; i++) {
+    for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i];
       if (track.kind === "node") addNodeBar(i, track.node, false);
       else if (track.kind === "compact") track.nodes.forEach((node) => addNodeBar(i, node, true));
@@ -2229,7 +2097,6 @@
       await grist.docApi.applyUserActions([["UpdateRecord", node.source.tableId, node.source.rowId, sourceFields]]);
       setDebugSyncMode("docApi.applyUserActions (vraie table source)");
       setDebugAction(`Update ${node.source.tableId}#${node.source.rowId}: ${Object.keys(sourceFields).join(", ")}`);
-      invalidateSourceTableRows(node.source.tableId, `écriture ${debugLabel || "champ"}`);
       return;
     }
 
@@ -2499,7 +2366,7 @@
     if (currentPeriodEl) currentPeriodEl.hidden = viewMode !== "timeline";
     if (tableToolbarActionsEl) tableToolbarActionsEl.hidden = viewMode !== "table";
     renderTableFieldSelect();
-    if (timelineDateSortSelect?.parentElement) timelineDateSortSelect.parentElement.hidden = false;
+    if (timelineDateSortSelect?.parentElement) timelineDateSortSelect.parentElement.hidden = viewMode !== "timeline";
     updateTimelineDateSortSelect();
   }
 
@@ -2555,8 +2422,8 @@
     return [...(node.children || [])].sort(compareNodesForTimeline);
   }
 
-  function sortedTableChildren(node) {
-    return [...(node.children || [])].sort(compareNodesForTimeline);
+  function sortedDefaultChildren(node) {
+    return [...(node.children || [])].sort(sortNodes);
   }
 
   function tableFilterValue(node, field) {
@@ -2590,11 +2457,11 @@
       if (!matchesSubtree) return;
       rows.push(node);
       const expanded = filtered || isNodeExpanded(node);
-      for (const child of sortedTableChildren(node)) {
+      for (const child of sortedDefaultChildren(node)) {
         if (expanded || hasLinkedSelectionInSubtree(child)) walk(child);
       }
     }
-    [...treeRoots].sort(compareNodesForTimeline).forEach((root) => walk(root));
+    [...treeRoots].sort(sortNodes).forEach((root) => walk(root));
     return rows;
   }
 
@@ -2730,106 +2597,42 @@
     return `<input ${baseAttrs} type="text" value="${escapeHtml(raw ?? value ?? "")}" />`;
   }
 
-  const tableViewDomState = {
-    headerSignature: null
-  };
-
-  function tableHeaderSignature(tableFields) {
-    return JSON.stringify({
-      fields: tableFields.map(({ field, label, width }) => ({ field, label, width })),
-      filters: tableColumnFilters,
-      openFilter: openTableFilterField
-    });
-  }
-
-  function renderTableHeader(tableEl, tableFields) {
-    const signature = tableHeaderSignature(tableFields);
-    let thead = tableEl.tHead;
-    if (!thead) thead = tableEl.createTHead();
-    if (tableViewDomState.headerSignature === signature && thead.rows.length) return;
-    const header = tableFields.map(renderTableHeaderCell).join("") + '<th style="width:180px">Actions</th>';
-    thead.innerHTML = `<tr>${header}</tr>`;
-    tableViewDomState.headerSignature = signature;
-  }
-
-  function renderTableBodyRow(node, tableFields) {
-    const color = getColorForNode(node);
-    const pad = 10 + (node.level - 1) * 24;
-    const toggle = `<button type="button" class="table-expander" data-table-toggle="${escapeHtml(node.id)}" ${node.children.length ? "" : "disabled"}>${node.children.length ? (isNodeExpanded(node) ? "▾" : "▸") : ""}</button>`;
-    const cells = tableFields.map((col, index) => {
-      if (col.field === "name") {
-        const nameCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, "name")}</div>`;
-        return `<td>${nameCell}</td>`;
-      }
-      if (index === 0) {
-        const labelCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, col.field)}</div>`;
-        return `<td>${labelCell}</td>`;
-      }
-      return `<td>${buildTableInput(node, col.field)}</td>`;
-    });
-    const canAddChild = node.level < 3 && canAddLevel(node.level + 1);
-    const addAction = node.level < 3
-      ? `<button type="button" class="btn btn-small row-add-btn" data-add-child="${escapeHtml(node.id)}" ${canAddChild ? "" : "disabled"}>+ Niveau ${node.level + 1}</button>`
-      : "";
-    const deleteAction = `<button type="button" class="btn btn-small row-delete-btn" data-delete-node="${escapeHtml(node.id)}" ${canDeleteNode(node) ? "" : "disabled"}>Supprimer</button>`;
-    return `<tr class="level-${node.level}${selectedNodeId === node.id ? " selected" : ""}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${addAction}${deleteAction}</td></tr>`;
-  }
-
-  function tableRowElementFromHtml(html) {
-    const template = document.createElement("template");
-    template.innerHTML = html.trim();
-    return template.content.firstElementChild;
-  }
-
-  function renderTableBody(tbody, rows, range, tableFields) {
-    const colSpan = tableFields.length + 1;
-    const renderedRows = rows.slice(range.start, range.end);
-    const existingRowsById = new Map(Array.from(tbody.querySelectorAll("tr[data-node-id]")).map((row) => [row.dataset.nodeId, row]));
-    const activeEditor = hierarchyTableWrapEl.contains(document.activeElement) && document.activeElement?.matches?.(".table-cell-editor")
-      ? document.activeElement
-      : null;
-    const nextNodes = [];
-
-    if (range.topSpacer) {
-      nextNodes.push(tableRowElementFromHtml(`<tr class="virtual-table-spacer" aria-hidden="true"><td colspan="${colSpan}" style="height:${range.topSpacer}px;padding:0;border:0"></td></tr>`));
-    }
-
-    for (const node of renderedRows) {
-      const html = renderTableBodyRow(node, tableFields);
-      const existing = existingRowsById.get(String(node.id));
-      const keepActiveEdit = Boolean(activeEditor && existing?.contains(activeEditor));
-      nextNodes.push(existing && (keepActiveEdit || existing.outerHTML === html) ? existing : tableRowElementFromHtml(html));
-    }
-
-    if (range.bottomSpacer) {
-      nextNodes.push(tableRowElementFromHtml(`<tr class="virtual-table-spacer" aria-hidden="true"><td colspan="${colSpan}" style="height:${range.bottomSpacer}px;padding:0;border:0"></td></tr>`));
-    }
-
-    tbody.replaceChildren(...nextNodes);
-  }
-
   function renderTableView() {
     if (!hierarchyTableWrapEl) return;
     const rows = visibleTableRows();
-    const range = visibleRangeForContainer(hierarchyTableWrapEl, rows.length, TABLE_ROW_HEIGHT);
     renderTableFieldSelect();
     if (taskCountEl) taskCountEl.textContent = `${allRecords.length} élément(s)`;
     if (!rows.length) {
       hierarchyTableWrapEl.innerHTML = '<div class="table-empty">Aucun élément à afficher.</div>';
-      tableViewDomState.headerSignature = null;
       return;
     }
     scheduleTableReferenceRefresh(rows);
     tableColumnFilters = sanitizeTableColumnFilters(tableColumnFilters);
     const tableFields = visibleTableFieldDefs();
-    let tableEl = hierarchyTableWrapEl.querySelector(":scope > table.hierarchy-table");
-    if (!tableEl) {
-      hierarchyTableWrapEl.innerHTML = '<table class="hierarchy-table"><thead></thead><tbody></tbody></table>';
-      tableEl = hierarchyTableWrapEl.querySelector(":scope > table.hierarchy-table");
-      tableViewDomState.headerSignature = null;
-    }
-    renderTableHeader(tableEl, tableFields);
-    renderTableBody(tableEl.tBodies[0] || tableEl.createTBody(), rows, range, tableFields);
+    const header = tableFields.map(renderTableHeaderCell).join("") + '<th style="width:180px">Actions</th>';
+    const body = rows.map((node) => {
+      const color = getColorForNode(node);
+      const pad = 10 + (node.level - 1) * 24;
+      const toggle = `<button type="button" class="table-expander" data-table-toggle="${escapeHtml(node.id)}" ${node.children.length ? "" : "disabled"}>${node.children.length ? (isNodeExpanded(node) ? "▾" : "▸") : ""}</button>`;
+      const cells = tableFields.map((col, index) => {
+        if (col.field === "name") {
+          const nameCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, "name")}</div>`;
+          return `<td>${nameCell}</td>`;
+        }
+        if (index === 0) {
+          const labelCell = `<div class="table-name-cell" style="padding-left:${pad}px"><span class="level-pill" style="background:${escapeHtml(color)}"></span>${toggle}<span class="table-level-label">N${node.level}</span>${buildTableInput(node, col.field)}</div>`;
+          return `<td>${labelCell}</td>`;
+        }
+        return `<td>${buildTableInput(node, col.field)}</td>`;
+      });
+      const canAddChild = node.level < 3 && canAddLevel(node.level + 1);
+      const addAction = node.level < 3
+        ? `<button type="button" class="btn btn-small row-add-btn" data-add-child="${escapeHtml(node.id)}" ${canAddChild ? "" : "disabled"}>+ Niveau ${node.level + 1}</button>`
+        : "";
+      const deleteAction = `<button type="button" class="btn btn-small row-delete-btn" data-delete-node="${escapeHtml(node.id)}" ${canDeleteNode(node) ? "" : "disabled"}>Supprimer</button>`;
+      return `<tr class="level-${node.level}${selectedNodeId === node.id ? " selected" : ""}" data-node-id="${escapeHtml(node.id)}">${cells.join("")}<td class="table-actions-cell">${addAction}${deleteAction}</td></tr>`;
+    }).join("");
+    hierarchyTableWrapEl.innerHTML = `<table class="hierarchy-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
   }
 
   function readTableEditValue(input) {
@@ -2879,7 +2682,6 @@
     await grist.docApi.applyUserActions([["RemoveRecord", node.source.tableId, node.source.rowId]]);
     setDebugSyncMode("docApi.applyUserActions (suppression table source)");
     setDebugAction(`Remove ${node.source.tableId}#${node.source.rowId}`);
-    invalidateSourceTableRows(node.source.tableId, "suppression");
     if (selectedNodeId === node.id) selectedNodeId = null;
     hideTooltip();
     await DataModel.loadAndRenderDirectMapping();
@@ -2897,7 +2699,6 @@
     await grist.docApi.applyUserActions([["AddRecord", cfg.tableId, null, fields]]);
     setDebugSyncMode("docApi.applyUserActions (ajout table source)");
     setDebugAction(`Add ${cfg.tableId}: ${Object.keys(fields).join(", ")}`);
-    invalidateSourceTableRows(cfg.tableId, "ajout");
     if (parentNode) expandedNodes[parentNode.id] = true;
     await DataModel.loadAndRenderDirectMapping();
     showToast(`Niveau ${level} ajouté`, "success");
@@ -2917,8 +2718,6 @@
     }
     initColorFieldSelect();
     if (viewMode === "timeline") {
-      ensureTimelineScrollSync();
-      flatTracks = buildTracks();
       TimelineView.buildHeaders();
       TimelineView.renderTaskList();
       TimelineView.renderTimeline();
@@ -2966,10 +2765,6 @@
 
   function bindTableHandlers() {
     tableAddLevel1Btn?.addEventListener("click", handleAddLevel1);
-    hierarchyTableWrapEl?.addEventListener("scroll", () => {
-      if (viewMode !== "table") return;
-      window.requestAnimationFrame(() => renderTableView());
-    }, { passive: true });
 
     hierarchyTableWrapEl?.addEventListener("click", async (e) => {
       const filterToggle = e.target.closest("[data-table-filter-toggle]");
@@ -3483,15 +3278,12 @@
 
   grist.onRecords(async function (records) {
     setDebugStatus(`onRecords reçu: ${records ? records.length : 0} ligne(s)`);
-    const previousViewSignature = currentTableId ? `${currentTableId}:${currentViewRowIdSignature()}` : null;
     currentViewRecords = Array.isArray(records) ? records : [];
     try {
       currentTableId = await grist.selectedTable.getTableId();
     } catch (e) {
       currentTableId = null;
     }
-    const nextViewSignature = currentTableId ? `${currentTableId}:${currentViewRowIdSignature()}` : null;
-    if (previousViewSignature !== nextViewSignature) directHierarchyDirty = true;
 
     if (await DataModel.loadAndRenderDirectMapping()) return;
 

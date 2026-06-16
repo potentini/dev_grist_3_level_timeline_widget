@@ -557,25 +557,19 @@
       }
 
       .grid-row {
+        display: flex;
         height: 34px;
         border-bottom: 1px solid var(--border);
-        background-image:
-          repeating-linear-gradient(
-            to right,
-            transparent 0,
-            transparent var(--weekend-start-width),
-            rgba(254, 242, 242, 0.95) var(--weekend-start-width),
-            rgba(254, 242, 242, 0.95) var(--week-cycle-width)
-          ),
-          repeating-linear-gradient(
-            to right,
-            transparent 0,
-            transparent calc(var(--cell-width) - 1px),
-            #f1f5f9 calc(var(--cell-width) - 1px),
-            #f1f5f9 var(--cell-width)
-          );
-        background-position-x: var(--week-offset-width, 0), 0;
-        background-size: var(--week-cycle-width) 100%, var(--cell-width) 100%;
+      }
+
+      .grid-cell {
+        min-width: var(--cell-width);
+        height: 100%;
+        border-right: 1px solid #f1f5f9;
+      }
+
+      .grid-cell.weekend {
+        background: #fef2f2;
       }
 
       .gantt-bar {
