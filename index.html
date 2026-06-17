@@ -480,6 +480,13 @@
         width: 100%;
         min-height: 100%;
         flex: 0 0 auto;
+        background-image: repeating-linear-gradient(
+          to right,
+          transparent 0,
+          transparent calc(var(--cell-width) - 1px),
+          #f1f5f9 calc(var(--cell-width) - 1px),
+          #f1f5f9 var(--cell-width)
+        );
       }
 
       .task-row {
@@ -557,19 +564,24 @@
       }
 
       .grid-row {
-        display: flex;
+        position: relative;
         height: 34px;
         border-bottom: 1px solid var(--border);
+        z-index: 2;
       }
 
       .grid-cell {
         min-width: var(--cell-width);
         height: 100%;
-        border-right: 1px solid #f1f5f9;
       }
 
-      .grid-cell.weekend {
-        background: #fef2f2;
+      .weekend-band {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        background: rgba(254, 242, 242, 0.8);
+        pointer-events: none;
+        z-index: 1;
       }
 
       .gantt-bar {
