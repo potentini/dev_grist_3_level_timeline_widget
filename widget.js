@@ -86,8 +86,13 @@
   let directRefreshInFlight = false;
   let directRefreshQueued = false;
   let directRefreshWaiters = [];
+  let directRefreshRequest = null;
+  let directRefreshQueuedRequest = null;
   let sourceColumnMetaPromise = null;
   const sourceColumnMetaCache = new Map();
+  const directTableRowsCache = new Map();
+  let directUnconstrainedTreeCache = null;
+  let directBuildConfigSignature = null;
   const tableMetaCache = new Map();
   const refOptionsCache = new Map();
   const tooltipState = { nodeId: null, editingField: null, draftValue: null, forceRefresh: false };
@@ -1352,9 +1357,63 @@
     return !!(cfg?.tableId && currentTableId && cfg.tableId === currentTableId && Array.isArray(currentViewRecords));
   }
 
-  async function directRowsForLevel(cfg) {
-    const sourceRows = rowsFromGristTable(await grist.docApi.fetchTable(cfg.tableId));
-    if (!isDirectLevelDrivenByCurrentView(cfg)) return { rows: sourceRows, isConstrained: false };
+  function normalizeDirectRefreshRequest(refresh = {}) {
+    if (typeof refresh === "string") return { reason: refresh, mode: refresh === "write" ? "write" : "full" };
+    const reason = refresh?.reason || "scheduled";
+    const mode = ["full", "selection", "write"].includes(refresh?.mode) ? refresh.mode : "full";
+    return { reason, mode };
+  }
+
+  function directMappingSignature() {
+    return JSON.stringify(directMappingConfig || {});
+  }
+
+  function directSourceTableIds() {
+    return Array.from(new Set(LEVELS.map((levelInfo) => directMappingConfig.levels[levelInfo.level]?.tableId).filter(Boolean)));
+  }
+
+  function invalidateDirectTableCache(tableId = null) {
+    if (tableId) directTableRowsCache.delete(tableId);
+    else directTableRowsCache.clear();
+    directUnconstrainedTreeCache = null;
+  }
+
+  async function fetchDirectTableRows(tableId, refresh = {}) {
+    const request = normalizeDirectRefreshRequest(refresh);
+    const cached = directTableRowsCache.get(tableId);
+    if (cached && request.mode !== "write") return cached.rows;
+    const rows = rowsFromGristTable(await grist.docApi.fetchTable(tableId));
+    directTableRowsCache.set(tableId, { rows });
+    return rows;
+  }
+
+  function directCurrentViewMatchesCachedSourceRows(tableId, records = currentViewRecords) {
+    if (!tableId || !Array.isArray(records)) return false;
+    const cached = directTableRowsCache.get(tableId);
+    if (!cached) return false;
+    const cachedById = new Map();
+    for (const row of cached.rows) {
+      const rowId = rowIdFromGristRow(row);
+      if (rowId != null) cachedById.set(rowId, row);
+    }
+    return records.every((record) => {
+      const rowId = rowIdFromGristRow(record);
+      if (rowId == null) return true;
+      const cachedRow = cachedById.get(rowId);
+      return cachedRow && Object.keys(record).every((key) => JSON.stringify(record[key]) === JSON.stringify(cachedRow[key]));
+    });
+  }
+
+  function directSelectionRefreshCanReuseSources(tableId, records = currentViewRecords) {
+    if (!tableId || !directSourceTableIds().includes(tableId)) return false;
+    if (!directUnconstrainedTreeCache || directBuildConfigSignature !== directMappingSignature()) return false;
+    return directSourceTableIds().every((sourceTableId) => directTableRowsCache.has(sourceTableId))
+      && directCurrentViewMatchesCachedSourceRows(tableId, records);
+  }
+
+  async function directRowsForLevel(cfg, refresh = {}) {
+    const sourceRows = await fetchDirectTableRows(cfg.tableId, refresh);
+    if (!isDirectLevelDrivenByCurrentView(cfg)) return { rows: sourceRows, sourceRows, isConstrained: false };
 
     const sourceRowsById = new Map();
     for (const row of sourceRows) {
@@ -1368,7 +1427,7 @@
       .map((rowId) => sourceRowsById.get(rowId))
       .filter(Boolean);
 
-    return { rows: visibleRows, isConstrained: true };
+    return { rows: visibleRows, sourceRows, isConstrained: true };
   }
 
   function constrainedDirectTree(roots, nodes, levelNodes) {
@@ -1442,26 +1501,107 @@
     return { roots: prunedRoots, nodes: prunedNodes };
   }
 
-  async function buildDirectMultitableRecords() {
+  function cloneDirectUnconstrainedTree(cache) {
+    const nodes = new Map();
+    for (const [id, node] of cache.nodes.entries()) nodes.set(id, { ...node, children: [], isLinkedSelection: false });
+    for (const [id, node] of cache.nodes.entries()) {
+      const clone = nodes.get(id);
+      clone.children = node.children.map((child) => nodes.get(child.id)).filter(Boolean);
+    }
+    const levelNodes = new Map();
+    for (const [level, current] of cache.levelNodes.entries()) {
+      const byRowId = new Map();
+      for (const [rowId, node] of current.byRowId.entries()) {
+        const clone = nodes.get(node.id);
+        if (clone) byRowId.set(rowId, clone);
+      }
+      levelNodes.set(level, { ...current, byRowId, isConstrained: false });
+    }
+    return {
+      roots: cache.roots.map((root) => nodes.get(root.id)).filter(Boolean),
+      nodes,
+      levelNodes
+    };
+  }
+
+  function applyDirectSelectionConstraintFromCache() {
+    const cloned = cloneDirectUnconstrainedTree(directUnconstrainedTreeCache);
+    for (const [level, current] of cloned.levelNodes.entries()) {
+      if (!isDirectLevelDrivenByCurrentView(current.cfg)) continue;
+      const visibleRowIds = new Set(currentViewRecords.map(rowIdFromGristRow).filter((rowId) => rowId != null));
+      const rows = current.rows.filter((row) => visibleRowIds.has(rowIdFromGristRow(row)));
+      const byRowId = new Map();
+      for (const row of rows) {
+        const rowId = rowIdFromGristRow(row);
+        const node = current.byRowId.get(rowId);
+        if (node) byRowId.set(rowId, node);
+      }
+      cloned.levelNodes.set(level, { ...current, rows, byRowId, isConstrained: true });
+    }
+    return constrainedDirectTree(cloned.roots, cloned.nodes, cloned.levelNodes);
+  }
+
+  function finalizeDirectVisibleTree(visibleRoots, visibleNodes) {
+    function finalize(node) {
+      let min = node.startDate || null;
+      let max = node.endDate || node.startDate || null;
+      node.children.sort(sortNodes);
+      for (const child of node.children) {
+        finalize(child);
+        if (child.aggStart && (!min || child.aggStart < min)) min = child.aggStart;
+        if (child.aggEnd && (!max || child.aggEnd > max)) max = child.aggEnd;
+        if (!node.status && child.status) node.status = child.status;
+        if (!node.responsible && child.responsible) node.responsible = child.responsible;
+      }
+      node.aggStart = node.startDate || min;
+      node.aggEnd = node.endDate || max || min;
+      node.isMilestone = !node.startDate && !!node.endDate;
+      node.milestoneDate = node.isMilestone ? node.endDate : null;
+      return node;
+    }
+
+    visibleRoots.sort(sortNodes).forEach(finalize);
+    nodeById = visibleNodes;
+    allRecords = Array.from(visibleNodes.values());
+    treeRoots = visibleRoots;
+    return allRecords;
+  }
+
+  async function buildDirectMultitableRecords(refresh = {}) {
+    const request = normalizeDirectRefreshRequest(refresh);
+    if (request.mode === "write") invalidateDirectTableCache();
     await loadSourceColumnMetadata();
+    if (request.mode === "selection" && directUnconstrainedTreeCache && directBuildConfigSignature === directMappingSignature()) {
+      const constrained = applyDirectSelectionConstraintFromCache();
+      return finalizeDirectVisibleTree(constrained.roots, constrained.nodes);
+    }
+
     const nodes = new Map();
     const levelNodes = new Map();
+    const constraintLevelNodes = new Map();
     const constrainedLevels = new Set();
     let sourceIndex = 0;
 
     for (const levelInfo of LEVELS) {
       const cfg = directMappingConfig.levels[levelInfo.level];
       if (!cfg?.tableId || !cfg.nameCol) continue;
-      const { rows, isConstrained } = await directRowsForLevel(cfg);
+      const { rows, sourceRows, isConstrained } = await directRowsForLevel(cfg, request);
       if (isConstrained) constrainedLevels.add(levelInfo.level);
       const byRowId = new Map();
-      for (const row of rows) {
+      for (const row of sourceRows) {
         const node = directNodeFromRow(row, levelInfo.level, cfg, sourceIndex++);
         if (!node) continue;
         nodes.set(node.id, node);
         byRowId.set(node.source.rowId, node);
       }
-      levelNodes.set(levelInfo.level, { rows, byRowId, cfg, isConstrained });
+      const levelNode = { rows: sourceRows, byRowId, cfg, isConstrained: false };
+      levelNodes.set(levelInfo.level, levelNode);
+      constraintLevelNodes.set(levelInfo.level, isConstrained
+        ? { ...levelNode, rows, byRowId: new Map(rows.map((row) => {
+          const rowId = rowIdFromGristRow(row);
+          return [rowId, byRowId.get(rowId)];
+        }).filter((entry) => entry[0] != null && entry[1])), isConstrained: true }
+        : levelNode);
     }
 
     const hasConstrainedLevel = constrainedLevels.size > 0;
@@ -1491,41 +1631,20 @@
       }
     }
 
-    function finalize(node) {
-      let min = node.startDate || null;
-      let max = node.endDate || node.startDate || null;
-      node.children.sort(sortNodes);
-      for (const child of node.children) {
-        finalize(child);
-        if (child.aggStart && (!min || child.aggStart < min)) min = child.aggStart;
-        if (child.aggEnd && (!max || child.aggEnd > max)) max = child.aggEnd;
-        if (!node.status && child.status) node.status = child.status;
-        if (!node.responsible && child.responsible) node.responsible = child.responsible;
-      }
-      node.aggStart = node.startDate || min;
-      node.aggEnd = node.endDate || max || min;
-      node.isMilestone = !node.startDate && !!node.endDate;
-      node.milestoneDate = node.isMilestone ? node.endDate : null;
-      return node;
-    }
-
-    const constrained = constrainedDirectTree(roots, nodes, levelNodes);
-    const visibleRoots = constrained.roots;
-    const visibleNodes = constrained.nodes;
-
-    visibleRoots.sort(sortNodes).forEach(finalize);
-    nodeById = visibleNodes;
-    allRecords = Array.from(visibleNodes.values());
-    treeRoots = visibleRoots;
-    return allRecords;
+    const unconstrained = cloneDirectUnconstrainedTree({ roots, nodes, levelNodes });
+    directUnconstrainedTreeCache = unconstrained;
+    directBuildConfigSignature = directMappingSignature();
+    const constrained = constrainedDirectTree(roots, nodes, constraintLevelNodes);
+    return finalizeDirectVisibleTree(constrained.roots, constrained.nodes);
   }
 
-  async function loadAndRenderDirectMapping() {
+  async function loadAndRenderDirectMapping(refresh = {}) {
+    const request = normalizeDirectRefreshRequest(refresh);
     directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
     if (!directMappingModeActive) return false;
     try {
       setDebugStatus("Chargement interne des tables sources…");
-      await buildDirectMultitableRecords();
+      await buildDirectMultitableRecords(request);
       const range = computeGlobalRange(allRecords);
       globalMinDate = range.min;
       globalMaxDate = range.max;
@@ -1549,7 +1668,16 @@
     waiters.forEach((resolve) => resolve(result));
   }
 
-  function scheduleDirectMappingRefresh(reason = "scheduled") {
+  function mergeDirectRefreshRequests(current, next) {
+    if (!current) return next;
+    const priority = { selection: 1, full: 2, write: 3 };
+    const mode = priority[next.mode] > priority[current.mode] ? next.mode : current.mode;
+    return { reason: `${current.reason}; ${next.reason}`, mode };
+  }
+
+  function scheduleDirectMappingRefresh(refresh = "scheduled") {
+    const request = normalizeDirectRefreshRequest(refresh);
+    directRefreshRequest = mergeDirectRefreshRequests(directRefreshRequest, request);
     if (directRefreshTimer) clearTimeout(directRefreshTimer);
 
     return new Promise((resolve) => {
@@ -1564,6 +1692,8 @@
 
         if (directRefreshInFlight) {
           directRefreshQueued = true;
+          directRefreshQueuedRequest = mergeDirectRefreshRequests(directRefreshQueuedRequest, directRefreshRequest);
+          directRefreshRequest = null;
           return;
         }
 
@@ -1572,8 +1702,12 @@
         try {
           do {
             directRefreshQueued = false;
-            setDebugAction(`Refresh mapping interne (${reason})`);
-            refreshed = await loadAndRenderDirectMapping();
+            const activeRequest = directRefreshRequest || directRefreshQueuedRequest || request;
+            directRefreshRequest = null;
+            directRefreshQueuedRequest = null;
+            setDebugAction(`Refresh mapping interne (${activeRequest.reason})`);
+            refreshed = await loadAndRenderDirectMapping(activeRequest);
+            directRefreshRequest = directRefreshQueuedRequest;
           } while (directRefreshQueued && directMappingModeActive);
         } finally {
           directRefreshInFlight = false;
@@ -3306,7 +3440,9 @@
     let shouldRender = false;
 
     if (optionMapping) {
+      const previousMappingSignature = directMappingSignature();
       directMappingConfig = normalizeDirectMappingConfig(optionMapping);
+      if (previousMappingSignature !== directMappingSignature()) invalidateDirectTableCache();
       directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
       saveDirectMappingConfigToLocalStorage(directMappingConfig);
       renderDirectMappingPanel();
@@ -3340,7 +3476,11 @@
     }
     setDebugAction("Rafraîchissement suite à onRecords: " + (currentTableId || "table inconnue"));
 
-    if (await scheduleDirectMappingRefresh("onRecords: " + (currentTableId || "table inconnue"))) return;
+    const refreshMode = directSelectionRefreshCanReuseSources(currentTableId, currentViewRecords) ? "selection" : "full";
+    if (await scheduleDirectMappingRefresh({
+      reason: "onRecords: " + (currentTableId || "table inconnue"),
+      mode: refreshMode
+    })) return;
 
     allRecords = [];
     treeRoots = [];
