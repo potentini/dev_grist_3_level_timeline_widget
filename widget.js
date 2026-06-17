@@ -1887,13 +1887,19 @@
       const row = document.createElement("div");
       row.className = "grid-row";
       row.style.width = containerWidth + "px";
+      timelineGridEl.appendChild(row);
+    }
+
+    if (zoomMode !== "all") {
       for (let i = 0; i < totalDays; i++) {
         const d = addDays(visibleStart, i);
-        const cell = document.createElement("div");
-        cell.className = "grid-cell" + (isWeekend(d) ? " weekend" : "");
-        row.appendChild(cell);
+        if (!isWeekend(d)) continue;
+        const band = document.createElement("div");
+        band.className = "weekend-band";
+        band.style.left = (i * (containerWidth / Math.max(1, totalDays))) + "px";
+        band.style.width = (containerWidth / Math.max(1, totalDays)) + "px";
+        timelineGridEl.appendChild(band);
       }
-      timelineGridEl.appendChild(row);
     }
 
     const today = normalizeDate(new Date());
