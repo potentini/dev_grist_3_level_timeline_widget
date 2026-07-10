@@ -397,7 +397,26 @@
   }
 
   function hasDirectMappingConfig(config) {
-    return LEVELS.some((levelInfo) => !!config?.levels?.[levelInfo.level]?.tableId);
+    const level1 = config?.levels?.[1];
+    return !!(level1?.tableId && level1?.nameCol);
+  }
+
+  function directMappingWaitMessage(config = directMappingConfig) {
+    const level1 = config?.levels?.[1];
+    if (!level1?.tableId) return "Sélectionnez une table pour le niveau 1";
+    if (!level1?.nameCol) return "Sélectionnez une colonne titre pour le niveau 1";
+    return "En attente du mapping interne…";
+  }
+
+  function clearDirectRecords() {
+    allRecords = [];
+    treeRoots = [];
+    flatTracks = [];
+    nodeById = new Map();
+    globalMinDate = null;
+    globalMaxDate = null;
+    directUnconstrainedTreeCache = null;
+    directBuildConfigSignature = null;
   }
 
   function saveWidgetStateOption(state) {
@@ -2895,12 +2914,13 @@
   function render() {
     updateViewModeButtons();
     if (!allRecords.length) {
-      taskListEl.innerHTML = '<div class="empty">En attente du mapping interne…</div>';
+      const waitMessage = directMappingWaitMessage();
+      taskListEl.innerHTML = `<div class="empty">${escapeHtml(waitMessage)}</div>`;
       timelineGridEl.innerHTML = "";
       yearsRowEl.innerHTML = monthsRowEl.innerHTML = weeksRowEl.innerHTML = daysRowEl.innerHTML = "";
       currentPeriodEl.textContent = "–";
       taskCountEl.textContent = "";
-      if (hierarchyTableWrapEl) hierarchyTableWrapEl.innerHTML = '<div class="table-empty">En attente du mapping interne…</div>';
+      if (hierarchyTableWrapEl) hierarchyTableWrapEl.innerHTML = `<div class="table-empty">${escapeHtml(waitMessage)}</div>`;
       updateExpandAllButton();
       return;
     }
@@ -3348,6 +3368,10 @@
       }
       saveDirectMappingConfig();
       directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
+      if (!directMappingModeActive) {
+        clearDirectRecords();
+        render();
+      }
       renderDirectMappingPanel();
       await scheduleDirectMappingRefresh("write");
     });
@@ -3444,6 +3468,7 @@
       directMappingConfig = normalizeDirectMappingConfig(optionMapping);
       if (previousMappingSignature !== directMappingSignature()) invalidateDirectTableCache();
       directMappingModeActive = hasDirectMappingConfig(directMappingConfig);
+      if (!directMappingModeActive) clearDirectRecords();
       saveDirectMappingConfigToLocalStorage(directMappingConfig);
       renderDirectMappingPanel();
       shouldRender = true;
