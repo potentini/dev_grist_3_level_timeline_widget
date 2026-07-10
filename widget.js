@@ -860,9 +860,8 @@
 
   function getNavigationBounds() {
     if (!globalMinDate || !globalMaxDate) return { minAllowed: null, maxAllowed: null };
-    const today = normalizeDate(new Date());
-    const minDate = today && today < globalMinDate ? today : globalMinDate;
-    const maxDate = today && today > globalMaxDate ? today : globalMaxDate;
+    const minDate = globalMinDate;
+    const maxDate = globalMaxDate;
     if (zoomMode === "all") {
       return {
         minAllowed: new Date(minDate.getFullYear() - 2, 0, 1),
@@ -875,11 +874,18 @@
     return { minAllowed: addDays(minDate, -marginDays), maxAllowed: addDays(maxDate, marginDays) };
   }
 
+  function positionRangeAroundReferenceDate(referenceDate, span) {
+    const daysBeforeReference = Math.floor(span * TODAY_POSITION_RATIO);
+    const start = addDays(referenceDate, -daysBeforeReference);
+    return { start, end: addDays(start, span - 1) };
+  }
+
   function positionRangeAroundToday(span) {
     const today = normalizeDate(new Date());
-    const daysBeforeToday = Math.floor(span * TODAY_POSITION_RATIO);
-    const start = addDays(today, -daysBeforeToday);
-    return { start, end: addDays(start, span - 1) };
+    let referenceDate = today;
+    if (globalMinDate && today < globalMinDate) referenceDate = globalMinDate;
+    else if (globalMaxDate && today > globalMaxDate) referenceDate = globalMaxDate;
+    return positionRangeAroundReferenceDate(referenceDate, span);
   }
 
   function setAllZoomRangeAroundToday() {
