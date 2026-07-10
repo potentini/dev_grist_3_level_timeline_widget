@@ -37,6 +37,10 @@ Ouvrez le panneau `Mapping`, puis configurez :
 - **Niveau 2 (optionnel)** : table source du deuxième niveau + colonne `Parent niveau 1` qui référence la ligne du niveau 1 + les mêmes champs métier.
 - **Niveau 3 (optionnel)** : table source du troisième niveau + colonne `Parent niveau 2` qui référence la ligne du niveau 2 + les mêmes champs métier.
 
+### Configuration minimale
+
+Configurer uniquement `Niveau 1` suffit pour utiliser le widget sans hiérarchie enfant. Sélectionnez une table source Niveau 1, mappez au minimum la colonne `Titre`, puis mappez `Date début` et/ou `Date fin` pour obtenir des barres visibles dans la timeline. Laissez `Niveau 2` et `Niveau 3` vides si aucune hiérarchie enfant n’est nécessaire.
+
 Quand une table est choisie, les champs essentiels sont automatiquement préremplis si la table contient des colonnes libellées ou nommées exactement `Titre`, `DateDebut`, `DateFin`, `Statut`, `Responsable` et `Avancement` (les accents et séparateurs sont normalisés pour la détection). Chaque niveau propose aussi `+ Ajouter un champ` pour créer un champ libre, saisir son nom affiché et le mapper sur une colonne non-formule de la table sélectionnée.
 
 Dès qu’une table est choisie dans ce panneau, le widget utilise `grist.docApi.fetchTable` pour lire les vraies tables sources. Les écritures depuis l’infobulle ou le glisser-déposer utilisent ensuite `UpdateRecord` sur la table et la ligne source connues.
@@ -57,7 +61,7 @@ Quand un champ devient éditable dans l’infobulle, le widget lit les métadonn
 1. Héberger `index.html` et `widget.js` sur une URL accessible (GitHub Pages, serveur interne, etc.).
 2. Dans Grist, ajouter un widget via une **URL personnalisée**.
 3. Renseigner l’URL de `index.html`.
-4. Ouvrir le panneau `Mapping` du widget et sélectionner les tables/colonnes sources.
+4. Ouvrir le panneau `Mapping` du widget et sélectionner les tables/colonnes sources. Pour une configuration minimale, il suffit de configurer `Niveau 1` : choisissez une table source Niveau 1, mappez au minimum `Titre`, ajoutez `Date début` et/ou `Date fin` pour afficher des barres dans la timeline, et laissez `Niveau 2` et `Niveau 3` vides si aucune hiérarchie enfant n’est nécessaire.
 5. Activer l’édition avec le bouton `Édition bloquée/autorisée`.
 6. Modifier un champ depuis l’infobulle, déplacer/redimensionner une barre explicitement datée ou basculer en vue `Table` pour modifier directement les cellules.
 7. En vue `Table`, utiliser `+ Ajouter un niveau 1` ou les boutons `+ Niveau 2` / `+ Niveau 3` des lignes parentes pour créer des éléments rattachés dans les tables sources.
