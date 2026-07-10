@@ -969,13 +969,22 @@
   function recomputeCellWidth(totalDays) {
     const bodyWidth = getTimelineAvailableWidth();
     let cellWidth = 32;
+    let containerWidth = null;
+
     if (zoomMode === "day") cellWidth = DAY_VIEW_CELL_WIDTH;
-    else if (zoomMode === "all") cellWidth = Math.max(2, Math.min(18, Math.floor(bodyWidth / Math.max(1, totalDays))));
-    else if (zoomMode === "year") cellWidth = Math.max(3, Math.min(10, Math.floor(bodyWidth / Math.max(1, totalDays))));
+    else if (zoomMode === "all") {
+      // Le zoom « Tout » doit réellement contenir toute la plage visible dans la
+      // largeur disponible. Un minimum fixe par jour crée une grille plus large
+      // que le viewport pour les longues périodes, ce qui laisse des barres
+      // dépasser vers la droite alors que la navigation est déjà bornée.
+      containerWidth = Math.max(1, bodyWidth);
+      cellWidth = containerWidth / Math.max(1, totalDays);
+    } else if (zoomMode === "year") cellWidth = Math.max(3, Math.min(10, Math.floor(bodyWidth / Math.max(1, totalDays))));
     else if (zoomMode === "month") cellWidth = Math.max(9, Math.min(24, Math.floor(bodyWidth / Math.max(1, totalDays))));
     else if (zoomMode === "week") cellWidth = Math.max(16, Math.min(32, Math.floor(bodyWidth / Math.max(1, totalDays))));
+
     document.documentElement.style.setProperty("--cell-width", cellWidth + "px");
-    return { cellWidth, containerWidth: totalDays * cellWidth };
+    return { cellWidth, containerWidth: containerWidth || totalDays * cellWidth };
   }
 
   function updateZoomButtons() {
