@@ -33,6 +33,7 @@
   const TODAY_POSITION_RATIO = 1 / 10;
   const NAVIGATION_STEP_RATIO = 1 / 24;
   const DAY_VIEW_CELL_WIDTH = 32;
+  const NO_DATE_RANGE_MESSAGE = "Les éléments du niveau 1 sont chargés, mais aucune date n’est mappée ou renseignée. Mappez Date début/Date fin pour afficher les barres de timeline.";
 
   const STORAGE_KEY = "grist_gantt_multilevel_state_v1";
   const WIDGET_STATE_OPTION_KEY = "uiState";
@@ -805,6 +806,7 @@
   function computeGlobalRange(nodes) {
     let min = null;
     let max = null;
+    if (!Array.isArray(nodes) || !nodes.length) return { min, max, hasRecords: false, hasDateRange: false };
     for (const n of nodes) {
       for (const d of [n.startDate, n.endDate, n.aggStart, n.aggEnd, n.milestoneDate]) {
         if (!d) continue;
@@ -812,7 +814,26 @@
         if (!max || d > max) max = d;
       }
     }
-    return { min, max };
+    return { min, max, hasRecords: true, hasDateRange: !!(min && max) };
+  }
+
+  function hasLoadedRecordsWithoutDates() {
+    return allRecords.length > 0 && (!globalMinDate || !globalMaxDate);
+  }
+
+  function resetTimelineViewportForNoDateRange() {
+    timelineGridEl.style.width = "";
+    timelineGridEl.style.height = "";
+    timelineGridEl.style.minHeight = "";
+    timelineBodyEl.style.height = "";
+    timelineBodyEl.style.minHeight = "";
+    yearsRowEl.innerHTML = monthsRowEl.innerHTML = weeksRowEl.innerHTML = daysRowEl.innerHTML = "";
+    currentPeriodEl.textContent = "–";
+  }
+
+  function renderNoDateRangeMessage() {
+    resetTimelineViewportForNoDateRange();
+    timelineGridEl.innerHTML = `<div class="empty">${escapeHtml(NO_DATE_RANGE_MESSAGE)}</div>`;
   }
 
   function isNodeExpanded(node) {
@@ -1669,7 +1690,9 @@
       globalMaxDate = range.max;
       keepOrRecomputeVisibleRange();
       saveState();
-      setDebugStatus(`Mapping interne OK: ${allRecords.length} élément(s)`);
+      setDebugStatus(range.hasRecords && !range.hasDateRange
+        ? `Mapping interne OK: ${allRecords.length} élément(s), aucune date`
+        : `Mapping interne OK: ${allRecords.length} élément(s)`);
       setDebugSyncMode("docApi.fetchTable/applyUserActions (mapping interne)");
       render();
       return true;
@@ -2010,6 +2033,10 @@
 
   function renderTimeline() {
     timelineGridEl.innerHTML = "";
+    if (hasLoadedRecordsWithoutDates()) {
+      renderNoDateRangeMessage();
+      return;
+    }
     if (!visibleStart || !visibleEnd) return;
     const tracks = flatTracks.length ? flatTracks : buildTracks();
     if (!tracks.length) return;
@@ -2926,9 +2953,13 @@
     }
     initColorFieldSelect();
     if (viewMode === "timeline") {
-      TimelineView.buildHeaders();
       TimelineView.renderTaskList();
-      TimelineView.renderTimeline();
+      if (hasLoadedRecordsWithoutDates()) {
+        renderNoDateRangeMessage();
+      } else {
+        TimelineView.buildHeaders();
+        TimelineView.renderTimeline();
+      }
     } else {
       TableView.renderTableView();
     }
