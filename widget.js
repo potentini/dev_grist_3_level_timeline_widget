@@ -3310,7 +3310,7 @@
     }).join("");
 
     mappingPanelEl.innerHTML = `
-      <div><strong>Mapping interne multitable</strong> : choisissez une table source par niveau, puis les champs à lire et à modifier. Le niveau 2 doit pointer vers le niveau 1, et le niveau 3 vers le niveau 2, via une colonne parent.</div>
+      <div><strong>Mapping interne multitable</strong> : choisissez une table source par niveau, puis les champs à lire et à modifier. Seul le niveau 1 est requis. Si vous configurez le niveau 2, indiquez sa colonne parent vers le niveau 1 ; si vous configurez le niveau 3, indiquez sa colonne parent vers le niveau 2.</div>
       ${levelBlocks}
       <div class="mapping-actions">
         <button class="btn btn-small" id="reloadDirectMappingBtn">Recharger depuis les tables</button>
