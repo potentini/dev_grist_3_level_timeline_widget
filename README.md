@@ -34,8 +34,8 @@ Le widget fonctionne désormais avec son **mapping interne multitable** : le bou
 Ouvrez le panneau `Mapping`, puis configurez :
 
 - **Niveau 1** : table racine + colonnes `Titre`, `Date début`, `Date fin`, `Statut`, `Responsable`, `Avancement`.
-- **Niveau 2** : table source du deuxième niveau + colonne `Parent niveau 1` qui référence la ligne du niveau 1 + les mêmes champs métier.
-- **Niveau 3** : table source du troisième niveau + colonne `Parent niveau 2` qui référence la ligne du niveau 2 + les mêmes champs métier.
+- **Niveau 2 (optionnel)** : table source du deuxième niveau + colonne `Parent niveau 1` qui référence la ligne du niveau 1 + les mêmes champs métier.
+- **Niveau 3 (optionnel)** : table source du troisième niveau + colonne `Parent niveau 2` qui référence la ligne du niveau 2 + les mêmes champs métier.
 
 Quand une table est choisie, les champs essentiels sont automatiquement préremplis si la table contient des colonnes libellées ou nommées exactement `Titre`, `DateDebut`, `DateFin`, `Statut`, `Responsable` et `Avancement` (les accents et séparateurs sont normalisés pour la détection). Chaque niveau propose aussi `+ Ajouter un champ` pour créer un champ libre, saisir son nom affiché et le mapper sur une colonne non-formule de la table sélectionnée.
 
