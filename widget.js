@@ -883,18 +883,8 @@
   }
 
   function setAllZoomRangeAroundToday() {
-    const today = normalizeDate(new Date());
-    const minDate = today && today < globalMinDate ? today : globalMinDate;
-    const maxDate = today && today > globalMaxDate ? today : globalMaxDate;
-    const daysBeforeData = Math.max(0, diffInDays(minDate, today));
-    const daysAfterData = Math.max(0, diffInDays(today, maxDate));
-    const minSpanForTodayOffset = Math.ceil((daysBeforeData + 1) / TODAY_POSITION_RATIO);
-    const minSpanForDataAfterToday = Math.ceil((daysAfterData + 1) / (1 - TODAY_POSITION_RATIO));
-    const dataSpan = diffInDays(minDate, maxDate) + 1;
-    const span = Math.max(dataSpan, minSpanForTodayOffset, minSpanForDataAfterToday, 30);
-    const range = positionRangeAroundToday(span);
-    visibleStart = range.start;
-    visibleEnd = range.end;
+    visibleStart = new Date(globalMinDate.getTime());
+    visibleEnd = new Date(globalMaxDate.getTime());
   }
 
   function getTimelineAvailableWidth() {
