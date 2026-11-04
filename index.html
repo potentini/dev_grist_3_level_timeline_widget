@@ -1,3 +1,5 @@
+---
+---
 <!DOCTYPE html>
 <html lang="fr">
   <head>
@@ -136,6 +138,18 @@
         align-items: center;
         flex-wrap: wrap;
         order: -1;
+      }
+
+      .widget-revision {
+        color: var(--text-muted);
+        font: 0.75rem monospace;
+        white-space: nowrap;
+      }
+
+      .header-actions:has(#tableToolbarActions[hidden]) .widget-revision,
+      .widget-revision[data-revision=""],
+      .widget-revision[data-revision^="{"] {
+        display: none;
       }
 
       .control {
@@ -1219,6 +1233,7 @@
           <select id="timelineDateSortSelect"></select>
         </div>
         <button class="btn btn-small" id="toggleMappingPanelBtn">Aide mapping</button>
+        <span class="widget-revision" data-revision="{{ site.github.build_revision }}" title="Commit déployé {{ site.github.build_revision }}">Commit {{ site.github.build_revision | slice: 0, 7 }}</span>
 
         <button class="btn btn-small" id="prevBtn" title="Période précédente">◀</button>
         <button class="btn btn-small" id="todayBtn" title="Positionner aujourd’hui">Aujourd’hui</button>
@@ -1287,6 +1302,6 @@
     <div class="toast-container" id="toastContainer"></div>
     <div class="drag-bubble" id="dragBubble"></div>
 
-    <script src="widget.js"></script>
+    <script src="widget.js?v={{ site.github.build_revision }}"></script>
   </body>
 </html>
