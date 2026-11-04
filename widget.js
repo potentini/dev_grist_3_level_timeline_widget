@@ -445,8 +445,7 @@
       const d = new Date(value * 1000);
       return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
     }
-    const dateOnly = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
-    const d = new Date(dateOnly ? value + "T00:00:00" : value);
+    const d = new Date(value);
     if (isNaN(d.getTime())) return null;
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
@@ -1587,18 +1586,9 @@
     return constrainedDirectTree(cloned.roots, cloned.nodes, cloned.levelNodes);
   }
 
-  function updateMilestone(node) {
-    const { startDate, endDate } = node;
-    node.milestoneDate = !startDate || !endDate || isSameDay(startDate, endDate)
-      ? (startDate || endDate || null)
-      : null;
-    node.isMilestone = !!node.milestoneDate;
-  }
-
   function finalizeDirectVisibleTree(visibleRoots, visibleNodes) {
     function finalize(node) {
-      updateMilestone(node);
-      let min = node.startDate || node.milestoneDate;
+      let min = node.startDate || null;
       let max = node.endDate || node.startDate || null;
       node.children.sort(sortNodes);
       for (const child of node.children) {
@@ -1610,6 +1600,8 @@
       }
       node.aggStart = node.startDate || min;
       node.aggEnd = node.endDate || max || min;
+      node.isMilestone = !node.startDate && !!node.endDate;
+      node.milestoneDate = node.isMilestone ? node.endDate : null;
       return node;
     }
 
@@ -1816,8 +1808,8 @@
   function editableTooltipRows(node) {
     const rows = [
       { field: "name", label: "Titre", value: fieldDisplayValue(node, "name"), editable: allowEditing },
-      { field: "start", label: "Début", value: formatDate(node.startDate), editable: allowEditing && !!fieldSourceColumn(node, "start") },
-      { field: "end", label: "Fin", value: formatDate(node.endDate), editable: allowEditing && !!fieldSourceColumn(node, "end") },
+      { field: "start", label: "Début", value: formatDate(node.startDate || node.milestoneDate || node.aggStart), editable: allowEditing && !node.startDate && !!node.endDate },
+      { field: "end", label: "Fin", value: formatDate(node.endDate || node.aggEnd || node.milestoneDate), editable: false },
       { field: "status", label: "Statut", value: fieldDisplayValue(node, "status"), editable: allowEditing },
       { field: "responsible", label: "Responsable", value: fieldDisplayValue(node, "responsible"), editable: allowEditing },
       { field: "progress", label: "Avancement", value: node.progress == null ? "" : `${Math.round(node.progress)}%`, editable: allowEditing },
@@ -1839,6 +1831,8 @@
 
   function rowTooltipAction(row) {
     if (!allowEditing) return "Édition bloquée";
+    if (row.field === "start") return row.editable ? "Créer une date de début égale à la fin" : "Lecture seule";
+    if (row.field === "end") return "Lecture seule";
     return row.editable ? "Modifier" : "Lecture seule";
   }
 
@@ -1940,13 +1934,10 @@
         <span>${escapeHtml(row.label)}</span><strong>${escapeHtml(value)}</strong>
       </button>`;
     }
-    const isTimelineDate = row.field === "start" || row.field === "end";
-    const raw = tooltipState.draftValue ?? (isTimelineDate
-      ? (row.field === "start" ? node.startDate : node.endDate)
-      : rawValueForField(node, row.field));
+    const raw = tooltipState.draftValue ?? rawValueForField(node, row.field);
     const baseType = baseGristType(row.meta?.type);
     let input;
-    if (isTimelineDate || baseType === "Date" || baseType === "DateTime") {
+    if (baseType === "Date" || baseType === "DateTime") {
       input = `<input data-edit-input type="date" value="${escapeHtml(toGristDateString(normalizeDate(raw)))}" />`;
     } else if ((baseType === "Choice" || baseType === "ChoiceList") && row.meta?.choices?.length) {
       input = buildChoiceInput(row, raw);
@@ -1962,9 +1953,7 @@
       input = `<input data-edit-input type="text" value="${escapeHtml(raw)}" />`;
     }
     return `<div class="${classes.join(" ")}" data-field="${row.field}">
-      <span>${escapeHtml(row.label)}</span>${isTimelineDate
-        ? `<div>${input}<button type="button" data-clear-date>Effacer</button></div>`
-        : input}
+      <span>${escapeHtml(row.label)}</span>${input}
     </div>`;
   }
 
@@ -2112,7 +2101,7 @@
       const end = node.isMilestone ? node.milestoneDate : (node.endDate || node.aggEnd || start);
       if (!start || !end || end < visibleStart || start > visibleEnd) return;
 
-      if (node.isMilestone) {
+      if (node.isMilestone && !node.startDate) {
         const frac = dateToCenterFrac(node.milestoneDate);
         if (frac == null) return;
         const x = frac * containerWidth;
@@ -2308,7 +2297,7 @@
       if (dragState.type === "move-milestone") {
         const deltaDays = Math.round((e.clientX - dragState.startX) / dragState.pxPerDay);
         const newDate = addDays(dragState.originalMilestoneDate, deltaDays);
-        await updateNodeDates(node, node.startDate ? newDate : undefined, node.endDate ? newDate : undefined);
+        await updateNodeDates(node, null, newDate);
       } else {
         await updateNodeDates(node, normalizeDate(dragState.bar.dataset.start), normalizeDate(dragState.bar.dataset.end));
       }
@@ -2352,8 +2341,8 @@
   async function updateNodeDates(node, newStart, newEnd) {
     if (!allowEditing) throw new Error("L’édition est bloquée.");
     const sourceFields = {};
-    if (newStart !== undefined && node.source.startCol) sourceFields[node.source.startCol] = toGristDateString(newStart);
-    if (newEnd !== undefined && node.source.endCol) sourceFields[node.source.endCol] = toGristDateString(newEnd);
+    if (newStart && node.source.startCol) sourceFields[node.source.startCol] = toGristDateString(newStart);
+    if (newEnd && node.source.endCol) sourceFields[node.source.endCol] = toGristDateString(newEnd);
     await writeNodeFields(node, sourceFields, "dates");
     if (directMappingModeActive) {
       await scheduleDirectMappingRefresh("write");
@@ -2398,10 +2387,9 @@
 
   async function updateTooltipField(node, field, rawValue) {
     if (!allowEditing) throw new Error("L’édition est bloquée.");
-    if (field === "start" || field === "end") {
-      if (!fieldSourceColumn(node, field)) throw new Error("Aucune colonne source n’est configurée pour cette date.");
-      const date = normalizeDate(rawValue);
-      await updateNodeDates(node, field === "start" ? date : undefined, field === "end" ? date : undefined);
+    if (field === "start") {
+      if (node.startDate || !node.endDate) throw new Error("La date de début ne peut être créée que pour un jalon avec une date de fin.");
+      await updateNodeDates(node, node.endDate, node.endDate);
       return;
     }
 
@@ -2416,8 +2404,7 @@
 
   function finalizeTreeDates() {
     function finalize(node) {
-      updateMilestone(node);
-      let min = node.startDate || node.milestoneDate;
+      let min = node.startDate || null;
       let max = node.endDate || node.startDate || null;
       node.children.sort(sortNodes);
       for (const child of node.children) {
@@ -2427,6 +2414,8 @@
       }
       node.aggStart = node.startDate || min;
       node.aggEnd = node.endDate || max || min;
+      node.isMilestone = !node.startDate && !!node.endDate;
+      node.milestoneDate = node.isMilestone ? node.endDate : null;
     }
     treeRoots.forEach(finalize);
     const range = computeGlobalRange(allRecords);
@@ -2454,8 +2443,8 @@
   }
 
   function applyLocalDateChange(node, newStart, newEnd) {
-    if (newStart !== undefined) node.startDate = newStart;
-    if (newEnd !== undefined) node.endDate = newEnd;
+    if (newStart) node.startDate = normalizeDate(newStart);
+    if (newEnd) node.endDate = normalizeDate(newEnd);
     node.explicitDates = !!(node.startDate || node.endDate);
     finalizeTreeDates();
     render();
@@ -2820,8 +2809,7 @@
     const meta = sourceColumnMeta(node, field);
     const baseType = baseGristType(meta?.type);
     if (field === "start" || field === "end" || baseType === "Date" || baseType === "DateTime") {
-      const date = field === "start" ? node.startDate : field === "end" ? node.endDate : normalizeDate(raw) || normalizeDate(value);
-      return `<input ${baseAttrs} type="date" value="${escapeHtml(toGristDateString(date))}" />`;
+      return `<input ${baseAttrs} type="date" value="${escapeHtml(toGristDateString(normalizeDate(raw) || normalizeDate(value)))}" />`;
     }
     if ((baseType === "Choice" || baseType === "ChoiceList") && meta?.choices?.length) {
       const multiple = baseType === "ChoiceList";
@@ -2889,6 +2877,19 @@
   function readTableEditValue(input) {
     if (input.tagName === "SELECT" && input.multiple) return Array.from(input.selectedOptions).map((option) => option.value);
     return input.value;
+  }
+
+  async function updateTableField(node, field, rawValue) {
+    if (!allowEditing) throw new Error("L’édition est bloquée.");
+    if (field === "start" || field === "end") {
+      const sourceCol = fieldSourceColumn(node, field);
+      if (!sourceCol) throw new Error("Aucune colonne source n’est configurée pour cette date.");
+      const nextDate = normalizeDate(rawValue);
+      await writeNodeFields(node, { [sourceCol]: nextDate ? toGristDateString(nextDate) : null }, FIELD_LABELS[field] || field);
+      await refreshAfterWrite(node, field, nextDate ? toGristDateString(nextDate) : null);
+      return;
+    }
+    await updateTooltipField(node, field, rawValue);
   }
 
   function canAddLevel(level) {
@@ -3106,7 +3107,7 @@
       const field = input.dataset.field;
       if (!node || !field) return;
       try {
-        await updateTooltipField(node, field, readTableEditValue(input));
+        await updateTableField(node, field, readTableEditValue(input));
         showToast("Champ mis à jour dans la table source", "success");
       } catch (err) {
         console.error(err);
@@ -3159,7 +3160,7 @@
     renderTableView,
     bindHandlers: bindTableHandlers,
     readTableEditValue,
-    updateTooltipField
+    updateTableField
   });
 
   const Controller = Object.freeze({
@@ -3187,12 +3188,6 @@
       const input = e.target.closest("[data-edit-input]");
       if (input) return;
 
-      if (e.target.closest("[data-clear-date]")) {
-        tooltipState.draftValue = "";
-        tooltipEl.querySelector("[data-edit-input]").value = "";
-        return;
-      }
-
       const saveBtn = e.target.closest(".tooltip-save");
       if (saveBtn) {
         if (!allowEditing) {
@@ -3216,6 +3211,17 @@
       const row = e.target.closest(".tooltip-edit-row.editable");
       if (!row || !allowEditing) return;
       const field = row.dataset.field;
+      if (field === "start") {
+        try {
+          await updateTooltipField(node, "start", "");
+          showToast("Date de début créée : le jalon devient une tâche", "success");
+          hideTooltip();
+        } catch (err) {
+          console.error(err);
+          showToast(err.message || "Erreur lors de la mise à jour", "error");
+        }
+        return;
+      }
       const rowInfo = editableTooltipRows(node).find((info) => info.field === field);
       const baseType = baseGristType(rowInfo?.meta?.type);
       if ((baseType === "Ref" || baseType === "RefList") && rowInfo?.meta?.refTableId) {
@@ -3223,7 +3229,7 @@
         catch (err) { console.warn("Impossible de charger les options de référence :", err); }
       }
       tooltipState.editingField = field;
-      tooltipState.draftValue = null;
+      tooltipState.draftValue = rawValueForField(node, field);
       refreshActiveTooltip();
     });
 
