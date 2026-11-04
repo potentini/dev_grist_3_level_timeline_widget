@@ -3159,7 +3159,7 @@
     renderTableView,
     bindHandlers: bindTableHandlers,
     readTableEditValue,
-    updateTableField
+    updateTooltipField
   });
 
   const Controller = Object.freeze({
